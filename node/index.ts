@@ -41,7 +41,7 @@ async function getWgPublicKey(): Promise<string> {
 async function syncPeers() {
   const { data: devices, error } = await supabase
     .from("devices")
-    .select("id, wireguard_public_key, tunnel_ip")
+    .select("id, wireguard_public_key, wireguard_ip")
     .eq("node_id", NODE_ID)
     .eq("status", "active");
 
@@ -57,9 +57,9 @@ async function syncPeers() {
 
   // Build peer config blocks
   const peerBlocks = devices
-    .filter((d) => d.wireguard_public_key && d.tunnel_ip)
+    .filter((d) => d.wireguard_public_key && d.wireguard_ip)
     .map((d) =>
-      `[Peer]\nPublicKey = ${d.wireguard_public_key}\nAllowedIPs = ${d.tunnel_ip}/32`
+      `[Peer]\nPublicKey = ${d.wireguard_public_key}\nAllowedIPs = ${d.wireguard_ip}/32`
     )
     .join("\n\n");
 
