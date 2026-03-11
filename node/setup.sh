@@ -11,6 +11,12 @@ apt-get install -y wireguard wireguard-tools docker.io docker-compose curl
 echo "net.ipv4.ip_forward=1" >> /etc/sysctl.conf
 sysctl -p
 
+# Free port 53 for SafeSwitch DNS
+systemctl stop systemd-resolved || true
+systemctl disable systemd-resolved || true
+rm -f /etc/resolv.conf
+echo "nameserver 1.1.1.1" > /etc/resolv.conf
+
 # Generate WireGuard keys if not present
 if [ ! -f /etc/wireguard/privatekey ]; then
   echo "[wg] generating keypair..."
