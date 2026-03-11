@@ -1,0 +1,17 @@
+[Unit]
+Description=SafeSwitch Node Agent
+After=network.target wg-quick@wg0.service
+Requires=wg-quick@wg0.service
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/safeswitch/node
+EnvironmentFile=/opt/safeswitch/node/.env
+ExecStart=/usr/bin/deno run --allow-net --allow-env --allow-run --allow-read --allow-write /opt/safeswitch/node/index.ts
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

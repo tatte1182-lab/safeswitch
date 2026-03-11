@@ -1,0 +1,21 @@
+version: "3.9"
+
+services:
+  node-agent:
+    build: .
+    container_name: ss-node-agent
+    restart: unless-stopped
+    network_mode: host
+    cap_add:
+      - NET_ADMIN
+      - SYS_MODULE
+    volumes:
+      - /etc/wireguard:/etc/wireguard
+      - ./.env:/app/.env:ro
+    env_file:
+      - .env
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
