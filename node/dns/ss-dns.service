@@ -1,0 +1,17 @@
+[Unit]
+Description=SafeSwitch DNS Engine
+After=network.target wg-quick@wg0.service ss-node-agent.service
+Requires=wg-quick@wg0.service
+
+[Service]
+Type=simple
+WorkingDirectory=/root/safeswitch/node/dns
+EnvironmentFile=/root/safeswitch/node/.env
+ExecStart=/usr/local/bin/deno run --allow-net --allow-env --allow-read index.ts
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
