@@ -1,0 +1,568 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SafeSwitch — Family Dashboard</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Syne:wght@700;800&display=swap" rel="stylesheet" />
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg: #080b10; --surface: #0d1117; --card: #111820; --border: #1a2535;
+      --accent: #00d4ff; --green: #00e5a0; --amber: #ffb800; --red: #ff4444;
+      --text: #e2eaf8; --dim: #8899bb; --muted: #3d5070;
+      --font-ui: 'IBM Plex Mono', monospace; --font-hd: 'Syne', sans-serif;
+    }
+    html, body { height: 100%; background: var(--bg); color: var(--text); font-family: var(--font-ui); font-size: 13px; line-height: 1.6; }
+    body {
+      background-image:
+        radial-gradient(ellipse 80% 40% at 50% 0%, rgba(0,212,255,0.06) 0%, transparent 60%),
+        linear-gradient(rgba(255,255,255,0.02) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255,255,255,0.02) 1px, transparent 1px);
+      background-size: 100% 100%, 32px 32px, 32px 32px;
+      min-height: 100vh;
+    }
+    .shell { max-width: 1200px; margin: 0 auto; padding: 32px 24px; }
+
+    /* header */
+    header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 40px; padding-bottom: 24px; border-bottom: 1px solid var(--border); }
+    .logo { display: flex; align-items: center; gap: 14px; }
+    .logo-icon { width: 40px; height: 40px; border-radius: 12px; background: linear-gradient(135deg, #00d4ff22, #00e5a022); border: 1px solid #00d4ff33; display: grid; place-items: center; font-size: 18px; }
+    .logo-text { font-family: var(--font-hd); font-size: 22px; font-weight: 800; letter-spacing: -0.03em; }
+    .logo-sub { font-size: 11px; color: var(--muted); letter-spacing: 0.15em; text-transform: uppercase; margin-top: 2px; }
+    .header-right { display: flex; align-items: center; gap: 16px; }
+    .live-badge { display: flex; align-items: center; gap: 8px; padding: 6px 14px; border-radius: 999px; background: #00e5a010; border: 1px solid #00e5a030; font-size: 11px; color: var(--green); letter-spacing: 0.12em; text-transform: uppercase; }
+    .live-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--green); box-shadow: 0 0 8px var(--green); animation: pulse 2s infinite; }
+    @keyframes pulse { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:0.5;transform:scale(0.85)} }
+    .timestamp { font-size: 11px; color: var(--muted); }
+    .section-label { font-size: 10px; letter-spacing: 0.2em; text-transform: uppercase; color: var(--muted); margin-bottom: 14px; }
+
+    /* ── NETWORK MAP ── */
+    .network-section { margin-bottom: 32px; }
+    .network-canvas-wrap {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      padding: 24px;
+      position: relative;
+      overflow: hidden;
+    }
+    .network-canvas-wrap::before {
+      content: '';
+      position: absolute; top: 0; left: 0; right: 0; height: 2px;
+      background: linear-gradient(90deg, transparent, var(--accent), transparent);
+      opacity: 0.5;
+    }
+    #networkCanvas { display: block; width: 100%; border-radius: 12px; }
+
+    /* node card */
+    .node-card { background: var(--card); border: 1px solid var(--border); border-radius: 20px; padding: 24px 28px; margin-bottom: 32px; position: relative; overflow: hidden; }
+    .node-card::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 2px; background: linear-gradient(90deg, transparent, var(--accent), transparent); opacity: 0.6; }
+    .node-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; }
+    .node-title { font-family: var(--font-hd); font-size: 18px; font-weight: 800; letter-spacing: -0.02em; }
+    .health-chip { display: flex; align-items: center; gap: 8px; padding: 6px 16px; border-radius: 999px; font-size: 12px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; }
+    .health-chip.online { background: #00e5a015; border: 1px solid #00e5a040; color: var(--green); }
+    .health-chip.stale { background: #ffb80015; border: 1px solid #ffb80040; color: var(--amber); }
+    .health-chip.offline { background: #ff444415; border: 1px solid #ff444440; color: var(--red); }
+    .node-stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; }
+    .stat { padding: 14px 16px; background: var(--surface); border: 1px solid var(--border); border-radius: 14px; }
+    .stat-label { font-size: 10px; color: var(--muted); letter-spacing: 0.15em; text-transform: uppercase; margin-bottom: 8px; }
+    .stat-value { font-size: 15px; font-weight: 600; color: var(--text); word-break: break-all; }
+    .stat-value.accent { color: var(--accent); }
+    .stat-value.green { color: var(--green); }
+
+    /* count strip */
+    .count-strip { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-bottom: 32px; }
+    .count-card { background: var(--card); border: 1px solid var(--border); border-radius: 16px; padding: 18px 20px; display: flex; align-items: center; gap: 14px; }
+    .count-icon { width: 40px; height: 40px; border-radius: 12px; display: grid; place-items: center; font-size: 18px; flex-shrink: 0; }
+    .count-num { font-family: var(--font-hd); font-size: 26px; font-weight: 800; line-height: 1; }
+    .count-lbl { font-size: 11px; color: var(--dim); margin-top: 4px; text-transform: uppercase; letter-spacing: 0.1em; }
+
+    /* devices */
+    .devices-grid { display: grid; gap: 10px; }
+    .device-row { background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 16px 20px; display: grid; grid-template-columns: 40px 1fr 120px 160px 120px 100px; align-items: center; gap: 16px; transition: border-color 0.2s; }
+    .device-row:hover { border-color: #2a3d5a; }
+    .device-icon { width: 36px; height: 36px; border-radius: 10px; display: grid; place-items: center; font-size: 16px; background: var(--surface); border: 1px solid var(--border); }
+    .device-name { font-weight: 600; font-size: 14px; }
+    .device-meta { font-size: 11px; color: var(--dim); margin-top: 3px; }
+    .presence-badge { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 999px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; }
+    .presence-badge.online { background: #00e5a015; border: 1px solid #00e5a030; color: var(--green); }
+    .presence-badge.recently_seen { background: #ffb80015; border: 1px solid #ffb80030; color: var(--amber); }
+    .presence-badge.offline { background: #ff444415; border: 1px solid #ff444430; color: var(--red); }
+    .presence-badge.never_seen { background: #3d507015; border: 1px solid #3d507030; color: var(--muted); }
+    .presence-dot { width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
+    .device-col { font-size: 12px; color: var(--dim); }
+    .empty-state { text-align: center; padding: 60px 20px; color: var(--muted); background: var(--card); border: 1px dashed var(--border); border-radius: 16px; }
+    .empty-state .empty-icon { font-size: 40px; margin-bottom: 16px; }
+    .empty-state h3 { font-family: var(--font-hd); font-size: 18px; color: var(--dim); margin-bottom: 8px; }
+    .empty-state p { font-size: 12px; max-width: 300px; margin: 0 auto; }
+    .devices-table-header { display: grid; grid-template-columns: 40px 1fr 120px 160px 120px 100px; gap: 16px; padding: 0 20px 10px; font-size: 10px; letter-spacing: 0.15em; text-transform: uppercase; color: var(--muted); }
+
+    /* config */
+    .config-overlay { position: fixed; inset: 0; background: rgba(8,11,16,0.96); display: flex; align-items: center; justify-content: center; z-index: 100; backdrop-filter: blur(8px); }
+    .config-box { background: var(--card); border: 1px solid var(--border); border-radius: 24px; padding: 36px; width: 100%; max-width: 480px; }
+    .config-title { font-family: var(--font-hd); font-size: 24px; font-weight: 800; margin-bottom: 8px; }
+    .config-sub { font-size: 12px; color: var(--dim); margin-bottom: 28px; }
+    .field { margin-bottom: 18px; }
+    .field label { display: block; font-size: 11px; color: var(--muted); letter-spacing: 0.15em; text-transform: uppercase; margin-bottom: 8px; }
+    .field input { width: 100%; padding: 12px 16px; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; color: var(--text); font-family: var(--font-ui); font-size: 13px; outline: none; transition: border-color 0.2s; }
+    .field input:focus { border-color: var(--accent); }
+    .field input::placeholder { color: var(--muted); }
+    .btn-primary { width: 100%; padding: 14px; background: var(--accent); color: #000; border: none; border-radius: 12px; font-family: var(--font-ui); font-size: 13px; font-weight: 600; cursor: pointer; letter-spacing: 0.05em; transition: opacity 0.2s; }
+    .btn-primary:hover { opacity: 0.85; }
+    .loading { display: flex; align-items: center; justify-content: center; height: 200px; color: var(--muted); gap: 12px; }
+    .spinner { width: 20px; height: 20px; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.8s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .error-bar { background: #ff444418; border: 1px solid #ff444440; border-radius: 10px; padding: 12px 16px; color: var(--red); font-size: 12px; margin-bottom: 20px; display: none; }
+  </style>
+</head>
+<body>
+
+<div class="config-overlay" id="configOverlay">
+  <div class="config-box">
+    <div class="config-title">SafeSwitch</div>
+    <div class="config-sub">Connect your Supabase project to view live family status.</div>
+    <div class="error-bar" id="configError"></div>
+    <div class="field"><label>Supabase Project URL</label><input type="text" id="inputUrl" placeholder="https://xxxx.supabase.co" /></div>
+    <div class="field"><label>Anon Key</label><input type="text" id="inputKey" placeholder="eyJ..." /></div>
+    <div class="field"><label>Family ID</label><input type="text" id="inputFamily" placeholder="07635bc4-..." /></div>
+    <button class="btn-primary" onclick="connect()">Connect Dashboard</button>
+  </div>
+</div>
+
+<div class="shell" id="dashboard" style="display:none">
+  <header>
+    <div class="logo">
+      <div class="logo-icon">🛡</div>
+      <div><div class="logo-text">SafeSwitch</div><div class="logo-sub">Family Dashboard</div></div>
+    </div>
+    <div class="header-right">
+      <div class="live-badge"><div class="live-dot"></div>Live</div>
+      <div class="timestamp" id="lastUpdated">—</div>
+    </div>
+  </header>
+
+  <!-- Network Map -->
+  <div class="network-section">
+    <div class="section-label">Network Map</div>
+    <div class="network-canvas-wrap">
+      <canvas id="networkCanvas" height="280"></canvas>
+    </div>
+  </div>
+
+  <!-- Node Health -->
+  <div class="section-label">Home Node</div>
+  <div class="node-card" id="nodeCard"><div class="loading"><div class="spinner"></div> Loading node status...</div></div>
+
+  <!-- Device Counts -->
+  <div class="count-strip">
+    <div class="count-card"><div class="count-icon" style="background:#00d4ff12;border:1px solid #00d4ff25">📱</div><div><div class="count-num" id="countTotal">—</div><div class="count-lbl">Total Devices</div></div></div>
+    <div class="count-card"><div class="count-icon" style="background:#00e5a012;border:1px solid #00e5a025">🟢</div><div><div class="count-num" style="color:var(--green)" id="countOnline">—</div><div class="count-lbl">Online</div></div></div>
+    <div class="count-card"><div class="count-icon" style="background:#ffb80012;border:1px solid #ffb80025">🟡</div><div><div class="count-num" style="color:var(--amber)" id="countRecent">—</div><div class="count-lbl">Recently Seen</div></div></div>
+    <div class="count-card"><div class="count-icon" style="background:#ff444412;border:1px solid #ff444425">⚫</div><div><div class="count-num" style="color:var(--red)" id="countOffline">—</div><div class="count-lbl">Offline</div></div></div>
+  </div>
+
+  <!-- Devices -->
+  <div class="section-label">Devices</div>
+  <div class="devices-table-header"><div></div><div>Device</div><div>Status</div><div>Last Seen</div><div>Tunnel IP</div><div>Trust</div></div>
+  <div class="devices-grid" id="devicesGrid"><div class="loading"><div class="spinner"></div> Loading devices...</div></div>
+</div>
+
+<script>
+const { createClient } = supabase;
+let sb = null, familyId = null;
+let nodeData = null, deviceList = [];
+let animFrame = null;
+
+// ── Network Canvas ──────────────────────────────────────────────────────────
+
+const canvas = document.getElementById('networkCanvas');
+const ctx = canvas.getContext('2d');
+
+// Particles / arcs state
+const arcs = [];
+const particles = [];
+
+function resizeCanvas() {
+  const wrap = canvas.parentElement;
+  canvas.width = wrap.clientWidth - 48;
+  canvas.height = 280;
+}
+
+function nodeColor(health) {
+  if (health === 'online') return '#00e5a0';
+  if (health === 'stale') return '#ffb800';
+  return '#ff4444';
+}
+
+function presenceColor(p) {
+  if (p === 'online') return '#00d4ff';
+  if (p === 'recently_seen') return '#ffb800';
+  return '#444e62';
+}
+
+// Arc particle travelling along a bezier
+class ArcParticle {
+  constructor(x1, y1, x2, y2, color) {
+    this.x1 = x1; this.y1 = y1; this.x2 = x2; this.y2 = y2;
+    this.color = color;
+    this.t = Math.random();
+    this.speed = 0.004 + Math.random() * 0.006;
+    this.dir = Math.random() > 0.5 ? 1 : -1;
+    this.size = 2 + Math.random() * 2;
+    this.trail = [];
+    // Control point - arc upward
+    this.cx = (x1 + x2) / 2 + (Math.random() - 0.5) * 60;
+    this.cy = Math.min(y1, y2) - 40 - Math.random() * 60;
+  }
+
+  bezier(t) {
+    const mt = 1 - t;
+    return {
+      x: mt*mt*this.x1 + 2*mt*t*this.cx + t*t*this.x2,
+      y: mt*mt*this.y1 + 2*mt*t*this.cy + t*t*this.y2,
+    };
+  }
+
+  update() {
+    this.trail.push(this.bezier(this.t));
+    if (this.trail.length > 12) this.trail.shift();
+    this.t += this.speed * this.dir;
+    if (this.t > 1 || this.t < 0) {
+      this.dir *= -1;
+      this.t = Math.max(0, Math.min(1, this.t));
+    }
+  }
+
+  draw(ctx) {
+    if (this.trail.length < 2) return;
+    for (let i = 1; i < this.trail.length; i++) {
+      const alpha = i / this.trail.length;
+      ctx.beginPath();
+      ctx.strokeStyle = this.color + Math.floor(alpha * 200).toString(16).padStart(2, '0');
+      ctx.lineWidth = this.size * alpha;
+      ctx.moveTo(this.trail[i-1].x, this.trail[i-1].y);
+      ctx.lineTo(this.trail[i].x, this.trail[i].y);
+      ctx.stroke();
+    }
+    // Head glow
+    const head = this.trail[this.trail.length - 1];
+    ctx.beginPath();
+    ctx.arc(head.x, head.y, this.size + 1, 0, Math.PI * 2);
+    ctx.fillStyle = this.color;
+    ctx.shadowBlur = 12;
+    ctx.shadowColor = this.color;
+    ctx.fill();
+    ctx.shadowBlur = 0;
+  }
+}
+
+// Static arc line (the path itself)
+function drawArcLine(ctx, x1, y1, x2, y2, cx, cy, color, alpha) {
+  ctx.beginPath();
+  ctx.moveTo(x1, y1);
+  ctx.quadraticCurveTo(cx, cy, x2, y2);
+  ctx.strokeStyle = color + Math.floor(alpha * 255).toString(16).padStart(2,'0');
+  ctx.lineWidth = 1;
+  ctx.stroke();
+}
+
+// Draw a node circle
+function drawNode(ctx, x, y, label, sublabel, color, size = 28) {
+  // Outer glow ring
+  const grad = ctx.createRadialGradient(x, y, size * 0.5, x, y, size * 1.8);
+  grad.addColorStop(0, color + '30');
+  grad.addColorStop(1, color + '00');
+  ctx.beginPath();
+  ctx.arc(x, y, size * 1.8, 0, Math.PI * 2);
+  ctx.fillStyle = grad;
+  ctx.fill();
+
+  // Circle
+  ctx.beginPath();
+  ctx.arc(x, y, size, 0, Math.PI * 2);
+  ctx.fillStyle = '#111820';
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 2;
+  ctx.fill();
+  ctx.stroke();
+
+  // Inner dot
+  ctx.beginPath();
+  ctx.arc(x, y, size * 0.35, 0, Math.PI * 2);
+  ctx.fillStyle = color;
+  ctx.shadowBlur = 10;
+  ctx.shadowColor = color;
+  ctx.fill();
+  ctx.shadowBlur = 0;
+
+  // Label
+  ctx.fillStyle = '#e2eaf8';
+  ctx.font = "bold 11px 'IBM Plex Mono', monospace";
+  ctx.textAlign = 'center';
+  ctx.fillText(label, x, y + size + 18);
+  if (sublabel) {
+    ctx.fillStyle = '#3d5070';
+    ctx.font = "10px 'IBM Plex Mono', monospace";
+    ctx.fillText(sublabel, x, y + size + 32);
+  }
+}
+
+let arcParticles = [];
+
+function buildArcParticles(homeX, homeY, devicePositions, nodeHealth) {
+  arcParticles = [];
+  const hColor = nodeColor(nodeHealth || 'offline');
+  devicePositions.forEach(d => {
+    if (d.presence === 'online' || d.presence === 'recently_seen') {
+      const dColor = presenceColor(d.presence);
+      // 3-5 particles per connection
+      const count = d.presence === 'online' ? 5 : 2;
+      for (let i = 0; i < count; i++) {
+        arcParticles.push(new ArcParticle(homeX, homeY, d.x, d.y, dColor));
+      }
+    }
+  });
+}
+
+function drawNetwork() {
+  const w = canvas.width, h = canvas.height;
+  ctx.clearRect(0, 0, w, h);
+
+  // Background
+  ctx.fillStyle = '#0d1117';
+  ctx.fillRect(0, 0, w, h);
+
+  // Grid dots
+  ctx.fillStyle = '#1a253520';
+  for (let x = 20; x < w; x += 32) {
+    for (let y = 20; y < h; y += 32) {
+      ctx.beginPath();
+      ctx.arc(x, y, 1, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  const homeX = w / 2, homeY = h / 2;
+  const health = nodeData?.health || 'offline';
+  const hColor = nodeColor(health);
+
+  // Place devices in a circle around home
+  const devicePositions = [];
+  if (deviceList.length > 0) {
+    const radius = Math.min(w, h) * 0.34;
+    deviceList.forEach((d, i) => {
+      const angle = (i / deviceList.length) * Math.PI * 2 - Math.PI / 2;
+      devicePositions.push({
+        ...d,
+        x: homeX + Math.cos(angle) * radius,
+        y: homeY + Math.sin(angle) * radius,
+      });
+    });
+  } else {
+    // Demo: show placeholder devices around home
+    const placeholders = [
+      { name: "Child's Phone", presence: 'online', platform: 'android' },
+      { name: "iPad", presence: 'recently_seen', platform: 'ios' },
+      { name: "Laptop", presence: 'offline', platform: 'windows' },
+    ];
+    const radius = Math.min(w, h) * 0.34;
+    placeholders.forEach((d, i) => {
+      const angle = (i / placeholders.length) * Math.PI * 2 - Math.PI / 2;
+      devicePositions.push({
+        ...d,
+        x: homeX + Math.cos(angle) * radius,
+        y: homeY + Math.sin(angle) * radius,
+      });
+    });
+  }
+
+  // Build particles if needed
+  if (arcParticles.length === 0) {
+    buildArcParticles(homeX, homeY, devicePositions, health);
+  }
+
+  // Draw static arc lines
+  devicePositions.forEach(d => {
+    const dColor = presenceColor(d.presence);
+    const cx = (homeX + d.x) / 2 + (Math.random() < 0.5 ? 1 : -1) * 30;
+    const cy = Math.min(homeY, d.y) - 50;
+    drawArcLine(ctx, homeX, homeY, d.x, d.y, cx, cy, dColor,
+      d.presence === 'online' ? 0.15 : d.presence === 'recently_seen' ? 0.08 : 0.04);
+  });
+
+  // Update & draw arc particles
+  arcParticles.forEach(p => { p.update(); p.draw(ctx); });
+
+  // Draw device nodes
+  devicePositions.forEach(d => {
+    const dColor = presenceColor(d.presence);
+    const icon = d.platform === 'ios' ? '📱' : d.platform === 'android' ? '🤖' : '💻';
+    drawNode(ctx, d.x, d.y, d.display_name || d.name || 'Device', d.presence, dColor, 20);
+  });
+
+  // New-device flash: burst ring on all nodes briefly
+  if (Date.now() < newNodeFlashUntil) {
+    const ft = 1 - (newNodeFlashUntil - Date.now()) / 2500;
+    devicePositions.forEach(d => {
+      if (d.presence === 'online' || d.presence === 'recently_seen') {
+        const r = 20 + ft * 40;
+        const a = (1 - ft) * 0.7;
+        ctx.beginPath();
+        ctx.arc(d.x, d.y, r, 0, Math.PI * 2);
+        ctx.strokeStyle = '#00e5a0' + Math.floor(a * 255).toString(16).padStart(2,'0');
+        ctx.lineWidth = 2;
+        ctx.stroke();
+      }
+    });
+  }
+
+  // Draw home node (on top)
+  drawNode(ctx, homeX, homeY, nodeData?.display_name || 'Home Node', nodeData?.public_ip || '', hColor, 34);
+
+  // Pulse ring on home if online
+  if (health === 'online') {
+    const t = (Date.now() % 2000) / 2000;
+    const r = 34 + t * 30;
+    const alpha = (1 - t) * 0.4;
+    ctx.beginPath();
+    ctx.arc(homeX, homeY, r, 0, Math.PI * 2);
+    ctx.strokeStyle = hColor + Math.floor(alpha * 255).toString(16).padStart(2,'0');
+    ctx.lineWidth = 2;
+    ctx.stroke();
+  }
+
+  animFrame = requestAnimationFrame(drawNetwork);
+}
+
+// ── Supabase ────────────────────────────────────────────────────────────────
+
+window.addEventListener('DOMContentLoaded', () => {
+  resizeCanvas();
+  window.addEventListener('resize', () => { resizeCanvas(); arcParticles = []; });
+  const saved = JSON.parse(localStorage.getItem('ss_config') || '{}');
+  if (saved.url) document.getElementById('inputUrl').value = saved.url;
+  if (saved.key) document.getElementById('inputKey').value = saved.key;
+  if (saved.family) document.getElementById('inputFamily').value = saved.family;
+  if (saved.url && saved.key && saved.family) connect();
+});
+
+async function connect() {
+  const url = document.getElementById('inputUrl').value.trim();
+  const key = document.getElementById('inputKey').value.trim();
+  const fid = document.getElementById('inputFamily').value.trim();
+  const errEl = document.getElementById('configError');
+  errEl.style.display = 'none';
+  if (!url || !key || !fid) { errEl.textContent = 'All fields required.'; errEl.style.display = 'block'; return; }
+  try {
+    sb = createClient(url, key);
+    familyId = fid;
+    const { error } = await sb.from('families').select('id').eq('id', fid).maybeSingle();
+    if (error) throw new Error(error.message);
+    localStorage.setItem('ss_config', JSON.stringify({ url, key, family: fid }));
+    document.getElementById('configOverlay').style.display = 'none';
+    document.getElementById('dashboard').style.display = 'block';
+    drawNetwork();
+    await refresh();
+    setInterval(refresh, 15000);
+    subscribeRealtime();
+  } catch (e) {
+    errEl.textContent = 'Connection failed: ' + e.message;
+    errEl.style.display = 'block';
+  }
+}
+
+async function refresh() {
+  await Promise.all([loadNode(), loadDevices()]);
+  arcParticles = [];
+  document.getElementById('lastUpdated').textContent = 'Updated ' + new Date().toLocaleTimeString();
+}
+
+async function loadNode() {
+  const { data } = await sb.from('node_current_status').select('*').eq('family_id', familyId).maybeSingle();
+  nodeData = data;
+  const card = document.getElementById('nodeCard');
+  if (!data) { card.innerHTML = `<div style="color:var(--red);font-size:12px">Failed to load node</div>`; return; }
+  const hb = data.seconds_since_heartbeat != null ? `${data.seconds_since_heartbeat}s ago` : '—';
+  card.innerHTML = `
+    <div class="node-header">
+      <div class="node-title">${data.display_name || 'Home Node'}</div>
+      <div class="health-chip ${data.health}">
+        <div class="presence-dot" style="background:${nodeColor(data.health)};box-shadow:0 0 6px ${nodeColor(data.health)}"></div>
+        ${data.health}
+      </div>
+    </div>
+    <div class="node-stats">
+      <div class="stat"><div class="stat-label">Public IP</div><div class="stat-value accent">${data.public_ip||'—'}</div></div>
+      <div class="stat"><div class="stat-label">WireGuard Endpoint</div><div class="stat-value" style="font-size:12px">${data.wireguard_endpoint||'—'}</div></div>
+      <div class="stat"><div class="stat-label">Last Heartbeat</div><div class="stat-value green">${hb}</div></div>
+      <div class="stat"><div class="stat-label">Node ID</div><div class="stat-value" style="font-size:10px;color:var(--dim)">${data.node_id?.slice(0,18)}...</div></div>
+    </div>`;
+}
+
+async function loadDevices() {
+  const { data: overview } = await sb.from('family_presence_overview').select('*').eq('family_id', familyId).maybeSingle();
+  if (overview) {
+    document.getElementById('countTotal').textContent = overview.total_devices ?? 0;
+    document.getElementById('countOnline').textContent = overview.devices_online ?? 0;
+    document.getElementById('countRecent').textContent = overview.devices_recently_seen ?? 0;
+    document.getElementById('countOffline').textContent = overview.devices_offline ?? 0;
+  }
+  const { data: devices } = await sb.from('device_presence_current').select('*').eq('family_id', familyId).order('last_seen_at', { ascending: false });
+  deviceList = devices || [];
+  const grid = document.getElementById('devicesGrid');
+  if (!deviceList.length) {
+    grid.innerHTML = `<div class="empty-state"><div class="empty-icon">📱</div><h3>No devices enrolled</h3><p>Devices will appear here once they connect through the Home Node.</p></div>`;
+    return;
+  }
+  grid.innerHTML = deviceList.map(d => {
+    const icon = d.platform === 'ios' ? '📱' : d.platform === 'android' ? '🤖' : d.platform === 'windows' ? '💻' : '📟';
+    const lastSeen = d.last_seen_at ? timeAgo(d.last_seen_at) : 'Never';
+    const trustColor = d.trust_state === 'enrolled' ? 'var(--green)' : d.trust_state === 'pending' ? 'var(--amber)' : 'var(--muted)';
+    return `<div class="device-row">
+      <div class="device-icon">${icon}</div>
+      <div><div class="device-name">${d.display_name||'Unknown'}</div><div class="device-meta">${d.platform||'unknown'} · ${d.device_id?.slice(0,8)}...</div></div>
+      <div><span class="presence-badge ${d.presence}"><span class="presence-dot"></span>${d.presence?.replace('_',' ')}</span></div>
+      <div class="device-col">${lastSeen}</div>
+      <div class="device-col">${d.wireguard_ip||'—'}</div>
+      <div class="device-col" style="color:${trustColor}">${d.trust_state||'—'}</div>
+    </div>`;
+  }).join('');
+}
+
+function subscribeRealtime() {
+  sb.channel('presence-updates')
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'nodes' }, () => refresh())
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'devices' }, (payload) => {
+      if (payload.eventType === 'INSERT') triggerNewNodeFlash();
+      refresh();
+    })
+    // Watch enrollment approvals — approved status means device record was just created
+    .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'enrollments' }, (payload) => {
+      if (payload.new?.status === 'approved') refresh();
+    })
+    .subscribe();
+}
+
+// Canvas flash + particle burst when a brand-new device node appears
+let newNodeFlashUntil = 0;
+function triggerNewNodeFlash() {
+  newNodeFlashUntil = Date.now() + 2500;
+  arcParticles = [];
+}
+
+function timeAgo(iso) {
+  const s = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
+  if (s < 60) return `${s}s ago`;
+  if (s < 3600) return `${Math.floor(s/60)}m ago`;
+  if (s < 86400) return `${Math.floor(s/3600)}h ago`;
+  return `${Math.floor(s/86400)}d ago`;
+}
+
+function nodeColor(h) { return h==='online'?'#00e5a0':h==='stale'?'#ffb800':'#ff4444'; }
+function presenceColor(p) { return p==='online'?'#00d4ff':p==='recently_seen'?'#ffb800':'#444e62'; }
+</script>
+</body>
+</html>
