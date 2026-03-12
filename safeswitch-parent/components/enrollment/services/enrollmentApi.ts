@@ -72,7 +72,7 @@ export async function createEnrollmentDraft(
     };
   }
 
-  const res = await fetch(`${getBaseUrl()}/functions/v1/create-enrollment-draft`, {
+  const res = await fetch(`${getBaseUrl()}/functions/v1/enrollment/create-enrollment-draft`, {
     method: "POST",
     headers: getHeaders(authToken),
     body: JSON.stringify({ family_id: familyId, child: childForm }),
@@ -91,7 +91,7 @@ export async function saveEnrollmentPolicy(
 ): Promise<void> {
   if (DEV_MOCK) { await sleep(1800); return; }
 
-  const res = await fetch(`${getBaseUrl()}/functions/v1/save-enrollment-policy`, {
+  const res = await fetch(`${getBaseUrl()}/functions/v1/enrollment/save-enrollment-policy`, {
     method: "POST",
     headers: getHeaders(authToken),
     body: JSON.stringify({ enrollment_id: enrollmentId, schedules: request.schedules }),
@@ -113,7 +113,7 @@ export async function createEnrollmentQr(
     };
   }
 
-  const res = await fetch(`${getBaseUrl()}/functions/v1/create-enrollment-qr`, {
+  const res = await fetch(`${getBaseUrl()}/functions/v1/enrollment/create-enrollment-qr`, {
     method: "POST",
     headers: getHeaders(authToken),
     body: JSON.stringify({ enrollment_id: enrollmentId }),
@@ -142,7 +142,7 @@ export async function getEnrollmentStatus(
   }
 
   const res = await fetch(
-    `${getBaseUrl()}/functions/v1/get-enrollment-status?enrollment_id=${encodeURIComponent(enrollmentId)}`,
+    `${getBaseUrl()}/functions/v1/enrollment/get-enrollment-status?enrollment_id=${encodeURIComponent(enrollmentId)}`,
     { method: "GET", headers: getHeaders(authToken), signal }
   );
   const json = await expectJson<{ status: EnrollmentStatus }>(res);
@@ -157,7 +157,7 @@ export async function cancelEnrollment(
 ): Promise<void> {
   if (DEV_MOCK) return;
 
-  const res = await fetch(`${getBaseUrl()}/functions/v1/cancel-enrollment`, {
+  const res = await fetch(`${getBaseUrl()}/functions/v1/enrollment/cancel-enrollment`, {
     method: "POST",
     headers: getHeaders(authToken),
     body: JSON.stringify({ enrollment_id: enrollmentId }),
