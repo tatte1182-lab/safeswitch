@@ -8,7 +8,16 @@ const WG_PORT = parseInt(Deno.env.get("WG_PORT") ?? "51820");
 const HEARTBEAT_INTERVAL_MS = 30_000;
 const RESYNC_INTERVAL_MS = 5 * 60_000;
 
+// ── relay fallback stub ───────────────────────────────────────────────────────
+// 1b4: A device is considered stale if its WireGuard handshake is older than
+// this threshold. In production this would trigger a real relay path.
+// For now it stubs the detection and logs intent — relay infrastructure comes later.
+const RELAY_STALE_THRESHOLD_MS = 3 * 60_000; // 3 minutes with no handshake
+
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
+
+// Populated on boot from the nodes table
+let FAMILY_ID = "";
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -33,6 +42,78 @@ async function getWgPublicKey(): Promise<string> {
     return await run(["wg", "show", WG_INTERFACE, "public-key"]);
   } catch {
     return "";
+  }
+}
+
+// ── relay fallback stub ───────────────────────────────────────────────────────
+
+// Returns a map of { publicKey -> lastHandshakeMs } from `wg show`
+async function getWgHandshakes(): Promise<Map<string, number>> {
+  const map = new Map<string, number>();
+  try {
+    const out = await run(["wg", "show", WG_INTERFACE, "latest-handshakes"]);
+    for (const line of out.split("\n")) {
+      const [key, ts] = line.trim().split(/\s+/);
+      if (key && ts) map.set(key, parseInt(ts) * 1000); // wg gives unix seconds
+    }
+  } catch {
+    // wg not available or interface not up — skip silently
+  }
+  return map;
+}
+
+// Checks each active device for a stale handshake.
+// If stale: logs relay intent and stubs a mesh_paths record.
+// This is 1b4 — detection + schema stub only, not real relay routing.
+async function checkRelayFallbacks() {
+  const { data: devices, error } = await supabase
+    .from("devices")
+    .select("id, wireguard_public_key, wireguard_ip, display_name, child_id")
+    .eq("assigned_node_id", NODE_ID)
+    .eq("trust_state", "trusted");
+
+  if (error || !devices?.length) return;
+
+  const handshakes = await getWgHandshakes();
+  const now = Date.now();
+
+  for (const device of devices) {
+    if (!device.wireguard_public_key) continue;
+
+    const lastHandshake = handshakes.get(device.wireguard_public_key) ?? 0;
+    const age = now - lastHandshake;
+    const isStale = lastHandshake === 0 || age > RELAY_STALE_THRESHOLD_MS;
+
+    if (isStale) {
+      console.log(
+        `[relay-stub] device ${device.display_name ?? device.id} has stale handshake ` +
+        `(${lastHandshake === 0 ? "never" : `${Math.round(age / 1000)}s ago`}) — ` +
+        `would activate relay path`
+      );
+
+      // Stub a mesh_paths record so the schema is exercised.
+      // is_active = false — this is a candidate, not an active relay path.
+      const { error: pathErr } = await supabase
+        .from("mesh_paths")
+        .upsert({
+          device_id:     device.id,
+          family_id:     FAMILY_ID || null,
+          relay_node_id: NODE_ID,
+          path_type:     "relay",
+          is_active:     false,
+          selected_at:   new Date().toISOString(),
+        }, { onConflict: "device_id, relay_node_id", ignoreDuplicates: false });
+
+      if (pathErr) {
+        // mesh_paths schema may differ — log and continue, don't crash
+        console.warn("[relay-stub] could not write mesh_path:", pathErr.message);
+      }
+    } else {
+      console.log(
+        `[relay-stub] device ${device.display_name ?? device.id} direct path healthy ` +
+        `(handshake ${Math.round(age / 1000)}s ago)`
+      );
+    }
   }
 }
 
@@ -84,6 +165,14 @@ async function markNodeActive() {
   const wireguard_public_key = await getWgPublicKey();
   const wireguard_endpoint = public_ip ? `${public_ip}:${WG_PORT}` : null;
 
+  // Fetch family_id so relay stubs can reference it
+  const { data: node } = await supabase
+    .from("nodes")
+    .select("family_id")
+    .eq("id", NODE_ID)
+    .single();
+  if (node?.family_id) FAMILY_ID = node.family_id;
+
   const { error } = await supabase
     .from("nodes")
     .update({
@@ -120,6 +209,9 @@ async function heartbeat() {
 
   if (error) console.error("[heartbeat] error:", error.message);
   else console.log("[heartbeat] ✓", new Date().toISOString());
+
+  // 1b4: check relay fallback candidates on every heartbeat
+  await checkRelayFallbacks();
 }
 
 // ── realtime subscription ─────────────────────────────────────────────────────
@@ -157,6 +249,7 @@ console.log(`[boot] SafeSwitch node-agent starting — NODE_ID=${NODE_ID}`);
 
 await markNodeActive();
 await syncPeers();
+await checkRelayFallbacks(); // 1b4: initial relay candidate scan
 subscribeToDeviceChanges();
 
 setInterval(heartbeat, HEARTBEAT_INTERVAL_MS);
