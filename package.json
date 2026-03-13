@@ -1,0 +1,11 @@
+{
+  "dependencies": {
+    "@supabase/supabase-js": "^2.99.1",
+    "expo": "^55.0.6",
+    "expo-battery": "~55.0.8",
+    "expo-location": "~55.1.2",
+    "expo-secure-store": "~55.0.8",
+    "expo-task-manager": "~55.0.9",
+    "react-native-svg": "15.15.3"
+  }
+}

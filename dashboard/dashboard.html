@@ -7,6 +7,8 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Syne:wght@700;800&display=swap" rel="stylesheet" />
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <link href="https://api.mapbox.com/mapbox-gl-js/v3.3.0/mapbox-gl.css" rel="stylesheet" />
+  <script src="https://api.mapbox.com/mapbox-gl-js/v3.3.0/mapbox-gl.js"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     :root {
@@ -39,25 +41,48 @@
     .timestamp { font-size: 11px; color: var(--muted); }
     .section-label { font-size: 10px; letter-spacing: 0.2em; text-transform: uppercase; color: var(--muted); margin-bottom: 14px; }
 
-    /* ── NETWORK MAP ── */
-    .network-section { margin-bottom: 32px; }
-    .network-canvas-wrap {
-      background: var(--card);
+    /* ── COMMAND CENTRE (Network + Location merged) ── */
+    .command-section { margin-bottom: 32px; }
+    .command-wrap {
+      position: relative;
+      background: #060910;
       border: 1px solid var(--border);
       border-radius: 20px;
-      padding: 24px;
-      position: relative;
       overflow: hidden;
+      height: 560px;
     }
-    .network-canvas-wrap::before {
+    .command-wrap::before {
       content: '';
-      position: absolute; top: 0; left: 0; right: 0; height: 2px;
+      position: absolute; top: 0; left: 0; right: 0; height: 1px;
       background: linear-gradient(90deg, transparent, var(--accent), transparent);
-      opacity: 0.5;
+      opacity: 0.6; z-index: 10; pointer-events: none;
     }
-    #networkCanvas { display: block; width: 100%; border-radius: 12px; }
+    /* Mapbox fills the entire wrap */
+    #locationMap { position: absolute; inset: 0; width: 100%; height: 100%; border-radius: 20px; }
+    /* Canvas sits on top of the map, pointer-events none so map stays interactive */
+    #networkCanvas { position: absolute; inset: 0; width: 100%; height: 100%; border-radius: 20px; pointer-events: none; }
+    .map-controls { position: absolute; top: 16px; right: 16px; z-index: 10; display: flex; flex-direction: column; gap: 8px; }
+    .map-btn { padding: 8px 14px; border-radius: 10px; border: 1px solid var(--border); background: rgba(6,9,16,0.88); color: var(--text); font-family: var(--font-ui); font-size: 11px; cursor: pointer; letter-spacing: 0.08em; text-transform: uppercase; transition: all 0.2s; backdrop-filter: blur(8px); display: flex; align-items: center; gap: 6px; }
+    .map-btn:hover { border-color: var(--accent); color: var(--accent); }
+    .map-btn.locating { border-color: var(--amber); color: var(--amber); animation: locating-pulse 1s infinite; }
+    @keyframes locating-pulse { 0%,100%{opacity:1} 50%{opacity:0.5} }
+    .map-legend { position: absolute; bottom: 16px; left: 16px; z-index: 10; background: rgba(6,9,16,0.88); border: 1px solid var(--border); border-radius: 10px; padding: 10px 14px; backdrop-filter: blur(8px); display: flex; gap: 14px; }
+    .legend-item { display: flex; align-items: center; gap: 6px; font-size: 10px; color: var(--dim); letter-spacing: 0.1em; text-transform: uppercase; }
+    .legend-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+    .map-device-panel { padding: 16px 20px; border-top: 1px solid var(--border); display: flex; gap: 10px; flex-wrap: wrap; }
+    .map-device-chip { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-radius: 10px; border: 1px solid var(--border); background: var(--surface); cursor: pointer; transition: border-color 0.2s; font-size: 12px; }
+    .map-device-chip:hover { border-color: #2a3d5a; }
+    .map-device-chip.active { border-color: var(--accent); background: #00d4ff0a; }
+    .map-device-chip-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+    .map-device-name { color: var(--text); font-weight: 600; }
+    .map-device-meta { color: var(--dim); font-size: 10px; margin-top: 1px; }
 
-    /* node card */
+    /* Mapbox popup dark override */
+    .mapboxgl-popup-content { background: #0d1117 !important; border: 1px solid #1a2535 !important; border-radius: 12px !important; padding: 14px 16px !important; box-shadow: 0 8px 32px rgba(0,0,0,0.5) !important; }
+    .mapboxgl-popup-tip { display: none !important; }
+    .mapboxgl-ctrl-group { background: #0d1117 !important; border: 1px solid #1a2535 !important; }
+    .mapboxgl-ctrl-group button { background: #0d1117 !important; color: #8899bb !important; }
+    .mapboxgl-ctrl-group button:hover { background: #111820 !important; }
     .node-card { background: var(--card); border: 1px solid var(--border); border-radius: 20px; padding: 24px 28px; margin-bottom: 32px; position: relative; overflow: hidden; }
     .node-card::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 2px; background: linear-gradient(90deg, transparent, var(--accent), transparent); opacity: 0.6; }
     .node-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; }
@@ -116,6 +141,24 @@
     .spinner { width: 20px; height: 20px; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.8s linear infinite; }
     @keyframes spin { to { transform: rotate(360deg); } }
     .error-bar { background: #ff444418; border: 1px solid #ff444440; border-radius: 10px; padding: 12px 16px; color: var(--red); font-size: 12px; margin-bottom: 20px; display: none; }
+
+    /* Geofence styles */
+    .gf-type-btn { padding:14px;border:1px solid var(--border);border-radius:12px;background:var(--surface);cursor:pointer;text-align:center;transition:all 0.2s; }
+    .gf-type-btn.active { border-color:var(--accent);background:#00d4ff0a;color:var(--accent); }
+    .gf-type-btn:hover { border-color:#2a3d5a; }
+    .geofence-row { background:var(--card);border:1px solid var(--border);border-radius:14px;padding:14px 18px;display:flex;align-items:center;gap:14px;margin-bottom:8px; }
+    .geofence-row-icon { width:36px;height:36px;border-radius:10px;background:var(--surface);border:1px solid var(--border);display:grid;place-items:center;font-size:16px;flex-shrink:0; }
+    .geofence-row-name { font-weight:600;font-size:14px; }
+    .geofence-row-meta { font-size:11px;color:var(--dim);margin-top:2px; }
+    .geofence-toggle { width:36px;height:20px;border-radius:999px;border:none;cursor:pointer;transition:background 0.2s;flex-shrink:0;position:relative; }
+    .geofence-toggle.on { background:#00e5a030;border:1px solid #00e5a060; }
+    .geofence-toggle.off { background:#1a2535;border:1px solid var(--border); }
+    .geofence-delete { padding:6px 12px;border-radius:8px;border:1px solid #ff444430;background:none;color:#ff4444;font-family:var(--font-ui);font-size:11px;cursor:pointer; }
+    .alert-row { display:flex;align-items:flex-start;gap:12px;padding:12px 16px;background:var(--card);border:1px solid var(--border);border-radius:12px;margin-bottom:8px;transition:opacity 0.2s; }
+    .alert-row.read { opacity:0.45; }
+    .alert-icon { width:32px;height:32px;border-radius:10px;display:grid;place-items:center;font-size:14px;flex-shrink:0; }
+    .alert-text { font-size:13px;flex:1; }
+    .alert-time { font-size:10px;color:var(--muted);margin-top:3px; }
   </style>
 </head>
 <body>
@@ -135,7 +178,7 @@
 <div class="shell" id="dashboard" style="display:none">
   <header>
     <div class="logo">
-      <div class="logo-icon">🛡</div>
+      <div class="logo-icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none"><polygon points="2,11 12,2 22,11" fill="#00c8ff18" stroke="#00c8ff" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/><rect x="4" y="11" width="16" height="11" rx="0" fill="#00c8ff10" stroke="#00c8ff" stroke-width="1.5" stroke-linejoin="round"/><rect x="14.5" y="2" width="2.5" height="4.5" fill="#00c8ff18" stroke="#00c8ff" stroke-width="1.5" stroke-linejoin="round"/><path d="M10 22V17.5C10 16.7 10.7 16 11.5 16H12.5C13.3 16 14 16.7 14 17.5V22" stroke="#00c8ff" stroke-width="1.5" stroke-linecap="round" fill="#00c8ff25"/><rect x="5.5" y="13.5" width="4" height="3.5" fill="#00c8ff20" stroke="#00c8ff60" stroke-width="1.2"/><rect x="14.5" y="13.5" width="4" height="3.5" fill="#00c8ff20" stroke="#00c8ff60" stroke-width="1.2"/></svg></div>
       <div><div class="logo-text">SafeSwitch</div><div class="logo-sub">Family Dashboard</div></div>
     </div>
     <div class="header-right">
@@ -144,11 +187,111 @@
     </div>
   </header>
 
-  <!-- Network Map -->
-  <div class="network-section">
-    <div class="section-label">Network Map</div>
-    <div class="network-canvas-wrap">
-      <canvas id="networkCanvas" height="280"></canvas>
+  <!-- Command Centre: Network + Location combined -->
+  <div class="command-section">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+      <div class="section-label" style="margin-bottom:0">Command Centre</div>
+      <div style="display:flex;gap:8px">
+        <button class="map-btn" id="locateNowBtn" onclick="locateNow()">
+          <span id="locateBtnIcon">⊕</span> Locate Now
+        </button>
+        <button class="map-btn" id="trailToggleBtn" onclick="toggleTrail()">
+          ◎ Trail: <span id="trailState">On</span>
+        </button>
+      </div>
+    </div>
+    <div class="command-wrap">
+      <!-- Mapbox base layer -->
+      <div id="locationMap"></div>
+      <!-- Canvas overlay for arcs + pulses -->
+      <canvas id="networkCanvas"></canvas>
+      <!-- Legend -->
+      <div class="map-legend">
+        <div class="legend-item"><div class="legend-dot" style="background:#00c8ff"></div>Online</div>
+        <div class="legend-item"><div class="legend-dot" style="background:#ffb800"></div>Recent</div>
+        <div class="legend-item"><div class="legend-dot" style="background:#3d5070"></div>Offline</div>
+        <div class="legend-item"><div class="legend-dot" style="background:rgba(0,229,160,0.4);border:1px solid #00e5a0"></div>Accuracy ring</div>
+      </div>
+    </div>
+    <!-- Device chips -->
+    <div class="map-device-panel" id="mapDevicePanel"></div>
+  </div>
+
+  <!-- Geofence Alerts -->
+  <div id="alertsSection" style="display:none;margin-bottom:32px">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+      <div class="section-label" style="margin-bottom:0">Geofence Alerts <span id="alertBadge" style="display:inline-block;background:#ff444420;border:1px solid #ff444440;color:#ff4444;font-size:10px;padding:2px 8px;border-radius:999px;margin-left:8px;vertical-align:middle"></span></div>
+      <button onclick="markAllAlertsRead()" style="font-family:var(--font-ui);font-size:11px;color:var(--muted);background:none;border:none;cursor:pointer;letter-spacing:0.1em;text-transform:uppercase">Mark all read</button>
+    </div>
+    <div id="alertsList"></div>
+  </div>
+
+  <!-- Geofence Management -->
+  <div class="map-section">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+      <div class="section-label" style="margin-bottom:0">Geofences</div>
+      <button class="map-btn" onclick="openGeofenceDrawer()" style="position:static">+ Add Geofence</button>
+    </div>
+    <div id="geofenceList"><div style="color:var(--muted);font-size:12px">No geofences yet.</div></div>
+  </div>
+
+  <!-- Geofence Drawer -->
+  <div id="geofenceDrawer" style="display:none;position:fixed;inset:0;background:rgba(8,11,16,0.92);z-index:200;backdrop-filter:blur(8px);display:none;align-items:center;justify-content:center">
+    <div style="background:var(--card);border:1px solid var(--border);border-radius:24px;padding:32px;width:100%;max-width:480px;max-height:90vh;overflow-y:auto">
+      <div style="font-family:var(--font-hd);font-size:22px;font-weight:800;margin-bottom:6px">Add Geofence</div>
+      <div style="font-size:12px;color:var(--dim);margin-bottom:24px">Draw a zone or tripwire on the map, then name it here.</div>
+
+      <div class="field">
+        <label>Name</label>
+        <input type="text" id="gfName" placeholder="School, Home, Sports ground..." />
+      </div>
+
+      <div class="field">
+        <label>Type</label>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:4px">
+          <div id="gfTypeCircle" class="gf-type-btn active" onclick="selectGfType('circle')">
+            <div style="font-size:16px;margin-bottom:4px">◉</div>
+            <div style="font-size:12px;font-weight:600">Circle zone</div>
+            <div style="font-size:10px;color:var(--dim);margin-top:2px">Click map centre, set radius</div>
+          </div>
+          <div id="gfTypeTripwire" class="gf-type-btn" onclick="selectGfType('tripwire')">
+            <div style="font-size:16px;margin-bottom:4px">⟶</div>
+            <div style="font-size:12px;font-weight:600">Tripwire line</div>
+            <div style="font-size:10px;color:var(--dim);margin-top:2px">Click two points on map</div>
+          </div>
+        </div>
+      </div>
+
+      <div id="circleFields">
+        <div class="field">
+          <label>Radius (metres)</label>
+          <input type="number" id="gfRadius" value="200" min="50" max="5000" />
+        </div>
+      </div>
+
+      <div id="tripwireFields" style="display:none">
+        <div style="font-size:12px;color:var(--dim);padding:10px 14px;background:var(--surface);border:1px solid var(--border);border-radius:10px;margin-bottom:16px">
+          Click two points on the map to define the tripwire line. The alert fires when the device crosses it.
+        </div>
+        <div id="tripwireCoords" style="font-size:11px;color:var(--muted);font-family:var(--font-ui)">No points selected yet.</div>
+      </div>
+
+      <div class="field">
+        <label>Alert on</label>
+        <select id="gfAlertOn" style="width:100%;padding:12px 16px;background:var(--surface);border:1px solid var(--border);border-radius:10px;color:var(--text);font-family:var(--font-ui);font-size:13px;outline:none">
+          <option value="both">Enter + Exit</option>
+          <option value="enter">Enter only</option>
+          <option value="exit">Exit only</option>
+        </select>
+      </div>
+
+      <div style="font-size:11px;color:var(--muted);margin-bottom:8px;letter-spacing:0.12em;text-transform:uppercase">Map preview — click to place</div>
+      <div id="drawerMap" style="width:100%;height:240px;border-radius:12px;overflow:hidden;border:1px solid var(--border);margin-bottom:20px"></div>
+
+      <div style="display:flex;gap:10px">
+        <button onclick="saveGeofence()" style="flex:1;padding:14px;background:var(--accent);color:#000;border:none;border-radius:12px;font-family:var(--font-ui);font-size:13px;font-weight:600;cursor:pointer">Save Geofence</button>
+        <button onclick="closeGeofenceDrawer()" style="padding:14px 20px;background:none;border:1px solid var(--border);border-radius:12px;color:var(--dim);font-family:var(--font-ui);font-size:13px;cursor:pointer">Cancel</button>
+      </div>
     </div>
   </div>
 
@@ -158,10 +301,10 @@
 
   <!-- Device Counts -->
   <div class="count-strip">
-    <div class="count-card"><div class="count-icon" style="background:#00d4ff12;border:1px solid #00d4ff25">📱</div><div><div class="count-num" id="countTotal">—</div><div class="count-lbl">Total Devices</div></div></div>
-    <div class="count-card"><div class="count-icon" style="background:#00e5a012;border:1px solid #00e5a025">🟢</div><div><div class="count-num" style="color:var(--green)" id="countOnline">—</div><div class="count-lbl">Online</div></div></div>
-    <div class="count-card"><div class="count-icon" style="background:#ffb80012;border:1px solid #ffb80025">🟡</div><div><div class="count-num" style="color:var(--amber)" id="countRecent">—</div><div class="count-lbl">Recently Seen</div></div></div>
-    <div class="count-card"><div class="count-icon" style="background:#ff444412;border:1px solid #ff444425">⚫</div><div><div class="count-num" style="color:var(--red)" id="countOffline">—</div><div class="count-lbl">Offline</div></div></div>
+    <div class="count-card"><div class="count-icon" style="background:#00d4ff12;border:1px solid #00d4ff25"><svg width="18" height="18" viewBox="0 0 24 24" fill="none"><rect x="5" y="1.5" width="14" height="21" rx="2.5" fill="#00d4ff18" stroke="#00d4ff" stroke-width="1.5" stroke-linejoin="round"/><rect x="7" y="4" width="10" height="14" rx="1" fill="#00d4ff22" stroke="#00d4ff70" stroke-width="1"/><line x1="10" y1="20" x2="14" y2="20" stroke="#00d4ff" stroke-width="1.5" stroke-linecap="round"/><circle cx="12" cy="2.6" r="0.7" fill="#00d4ff70"/></svg></div><div><div class="count-num" id="countTotal">—</div><div class="count-lbl">Total Devices</div></div></div>
+    <div class="count-card"><div class="count-icon" style="background:#00e5a012;border:1px solid #00e5a025"><svg width="18" height="18" viewBox="0 0 24 24" fill="none"><rect x="5" y="1.5" width="14" height="21" rx="2.5" fill="#00e5a018" stroke="#00e5a0" stroke-width="1.5" stroke-linejoin="round"/><rect x="7" y="4" width="10" height="14" rx="1" fill="#00e5a022" stroke="#00e5a070" stroke-width="1"/><line x1="10" y1="20" x2="14" y2="20" stroke="#00e5a0" stroke-width="1.5" stroke-linecap="round"/><circle cx="12" cy="2.6" r="0.7" fill="#00e5a070"/></svg></div><div><div class="count-num" style="color:var(--green)" id="countOnline">—</div><div class="count-lbl">Online</div></div></div>
+    <div class="count-card"><div class="count-icon" style="background:#ffb80012;border:1px solid #ffb80025"><svg width="18" height="18" viewBox="0 0 24 24" fill="none"><rect x="5" y="1.5" width="14" height="21" rx="2.5" fill="#ffb80018" stroke="#ffb800" stroke-width="1.5" stroke-linejoin="round"/><rect x="7" y="4" width="10" height="14" rx="1" fill="#ffb80022" stroke="#ffb80070" stroke-width="1"/><line x1="10" y1="20" x2="14" y2="20" stroke="#ffb800" stroke-width="1.5" stroke-linecap="round"/><circle cx="12" cy="2.6" r="0.7" fill="#ffb80070"/></svg></div><div><div class="count-num" style="color:var(--amber)" id="countRecent">—</div><div class="count-lbl">Recently Seen</div></div></div>
+    <div class="count-card"><div class="count-icon" style="background:#ff444412;border:1px solid #ff444425"><svg width="18" height="18" viewBox="0 0 24 24" fill="none"><rect x="5" y="1.5" width="14" height="21" rx="2.5" fill="#44496218" stroke="#444e62" stroke-width="1.5" stroke-linejoin="round"/><rect x="7" y="4" width="10" height="14" rx="1" fill="#44496222" stroke="#44496270" stroke-width="1"/><line x1="10" y1="20" x2="14" y2="20" stroke="#444e62" stroke-width="1.5" stroke-linecap="round"/><circle cx="12" cy="2.6" r="0.7" fill="#44496270"/></svg></div><div><div class="count-num" style="color:var(--red)" id="countOffline">—</div><div class="count-lbl">Offline</div></div></div>
   </div>
 
   <!-- Devices -->
@@ -178,17 +321,18 @@ let animFrame = null;
 
 // ── Network Canvas ──────────────────────────────────────────────────────────
 
-const canvas = document.getElementById('networkCanvas');
-const ctx = canvas.getContext('2d');
+let canvas, ctx;
 
 // Particles / arcs state
 const arcs = [];
 const particles = [];
 
 function resizeCanvas() {
-  const wrap = canvas.parentElement;
-  canvas.width = wrap.clientWidth - 48;
-  canvas.height = 280;
+  if (!canvas) return;
+  const wrap = document.querySelector('.command-wrap');
+  if (!wrap) return;
+  canvas.width  = wrap.clientWidth;
+  canvas.height = wrap.clientHeight;
 }
 
 function nodeColor(health) {
@@ -203,245 +347,441 @@ function presenceColor(p) {
   return '#444e62';
 }
 
-// Arc particle travelling along a bezier
-class ArcParticle {
-  constructor(x1, y1, x2, y2, color) {
-    this.x1 = x1; this.y1 = y1; this.x2 = x2; this.y2 = y2;
+// ── Glow beam pulse travelling along a line ───────────────────────────────────
+class BeamPulse {
+  constructor(x1, y1, x2, y2, color, toHome) {
+    this.x1 = x1; this.y1 = y1;
+    this.x2 = x2; this.y2 = y2;
     this.color = color;
-    this.t = Math.random();
-    this.speed = 0.004 + Math.random() * 0.006;
-    this.dir = Math.random() > 0.5 ? 1 : -1;
-    this.size = 2 + Math.random() * 2;
-    this.trail = [];
-    // Control point - arc upward
-    this.cx = (x1 + x2) / 2 + (Math.random() - 0.5) * 60;
-    this.cy = Math.min(y1, y2) - 40 - Math.random() * 60;
-  }
-
-  bezier(t) {
-    const mt = 1 - t;
-    return {
-      x: mt*mt*this.x1 + 2*mt*t*this.cx + t*t*this.x2,
-      y: mt*mt*this.y1 + 2*mt*t*this.cy + t*t*this.y2,
-    };
+    this.toHome = toHome;
+    this.t = Math.random(); // stagger
+    this.speed = 0.0035 + Math.random() * 0.002;
   }
 
   update() {
-    this.trail.push(this.bezier(this.t));
-    if (this.trail.length > 12) this.trail.shift();
-    this.t += this.speed * this.dir;
-    if (this.t > 1 || this.t < 0) {
-      this.dir *= -1;
-      this.t = Math.max(0, Math.min(1, this.t));
-    }
+    this.t += this.speed;
+    if (this.t > 1) this.t -= 1;
   }
 
   draw(ctx) {
-    if (this.trail.length < 2) return;
-    for (let i = 1; i < this.trail.length; i++) {
-      const alpha = i / this.trail.length;
-      ctx.beginPath();
-      ctx.strokeStyle = this.color + Math.floor(alpha * 200).toString(16).padStart(2, '0');
-      ctx.lineWidth = this.size * alpha;
-      ctx.moveTo(this.trail[i-1].x, this.trail[i-1].y);
-      ctx.lineTo(this.trail[i].x, this.trail[i].y);
-      ctx.stroke();
-    }
-    // Head glow
-    const head = this.trail[this.trail.length - 1];
+    const t = this.t;
+    const x = this.x1 + (this.x2 - this.x1) * t;
+    const y = this.y1 + (this.y2 - this.y1) * t;
+
+    // Outer glow halo
+    const g = ctx.createRadialGradient(x, y, 0, x, y, 14);
+    g.addColorStop(0,   this.color + 'cc');
+    g.addColorStop(0.3, this.color + '44');
+    g.addColorStop(1,   this.color + '00');
     ctx.beginPath();
-    ctx.arc(head.x, head.y, this.size + 1, 0, Math.PI * 2);
-    ctx.fillStyle = this.color;
-    ctx.shadowBlur = 12;
-    ctx.shadowColor = this.color;
+    ctx.arc(x, y, 14, 0, Math.PI * 2);
+    ctx.fillStyle = g;
     ctx.fill();
-    ctx.shadowBlur = 0;
+
+    // Core bright dot
+    ctx.beginPath();
+    ctx.arc(x, y, 3, 0, Math.PI * 2);
+    ctx.fillStyle = '#ffffff';
+    ctx.fill();
   }
 }
 
-// Static arc line (the path itself)
-function drawArcLine(ctx, x1, y1, x2, y2, cx, cy, color, alpha) {
-  ctx.beginPath();
-  ctx.moveTo(x1, y1);
-  ctx.quadraticCurveTo(cx, cy, x2, y2);
-  ctx.strokeStyle = color + Math.floor(alpha * 255).toString(16).padStart(2,'0');
-  ctx.lineWidth = 1;
-  ctx.stroke();
-}
+let trafficDots = []; // renamed but kept as BeamPulse instances
 
-// Draw a node circle
-function drawNode(ctx, x, y, label, sublabel, color, size = 28) {
-  // Outer glow ring
-  const grad = ctx.createRadialGradient(x, y, size * 0.5, x, y, size * 1.8);
-  grad.addColorStop(0, color + '30');
-  grad.addColorStop(1, color + '00');
-  ctx.beginPath();
-  ctx.arc(x, y, size * 1.8, 0, Math.PI * 2);
-  ctx.fillStyle = grad;
-  ctx.fill();
-
-  // Circle
-  ctx.beginPath();
-  ctx.arc(x, y, size, 0, Math.PI * 2);
-  ctx.fillStyle = '#111820';
-  ctx.strokeStyle = color;
-  ctx.lineWidth = 2;
-  ctx.fill();
-  ctx.stroke();
-
-  // Inner dot
-  ctx.beginPath();
-  ctx.arc(x, y, size * 0.35, 0, Math.PI * 2);
-  ctx.fillStyle = color;
-  ctx.shadowBlur = 10;
-  ctx.shadowColor = color;
-  ctx.fill();
-  ctx.shadowBlur = 0;
-
-  // Label
-  ctx.fillStyle = '#e2eaf8';
-  ctx.font = "bold 11px 'IBM Plex Mono', monospace";
-  ctx.textAlign = 'center';
-  ctx.fillText(label, x, y + size + 18);
-  if (sublabel) {
-    ctx.fillStyle = '#3d5070';
-    ctx.font = "10px 'IBM Plex Mono', monospace";
-    ctx.fillText(sublabel, x, y + size + 32);
-  }
+function buildTrafficDots(homeX, homeY, devicePositions) {
+  trafficDots = [];
+  devicePositions.forEach(d => {
+    if (d.presence === 'offline') return;
+    const color = presenceColor(d.presence);
+    const count = d.presence === 'online' ? 2 : 1;
+    for (let i = 0; i < count; i++) {
+      trafficDots.push(new BeamPulse(d.x, d.y, homeX, homeY, color, true));
+      trafficDots.push(new BeamPulse(homeX, homeY, d.x, d.y, color, false));
+    }
+  });
 }
 
 let arcParticles = [];
 
-function buildArcParticles(homeX, homeY, devicePositions, nodeHealth) {
-  arcParticles = [];
-  const hColor = nodeColor(nodeHealth || 'offline');
-  devicePositions.forEach(d => {
-    if (d.presence === 'online' || d.presence === 'recently_seen') {
-      const dColor = presenceColor(d.presence);
-      // 3-5 particles per connection
-      const count = d.presence === 'online' ? 5 : 2;
-      for (let i = 0; i < count; i++) {
-        arcParticles.push(new ArcParticle(homeX, homeY, d.x, d.y, dColor));
-      }
-    }
-  });
-}
-
 function drawNetwork() {
+  if (!canvas || !ctx) { animFrame = requestAnimationFrame(drawNetwork); return; }
   const w = canvas.width, h = canvas.height;
+  if (w === 0 || h === 0) { animFrame = requestAnimationFrame(drawNetwork); return; }
+
+  ctx.clearRect(0, 0, w, h);
+  // Transparent — Mapbox map shows through underneath
   ctx.clearRect(0, 0, w, h);
 
-  // Background
-  ctx.fillStyle = '#0d1117';
-  ctx.fillRect(0, 0, w, h);
-
-  // Grid dots
-  ctx.fillStyle = '#1a253520';
-  for (let x = 20; x < w; x += 32) {
-    for (let y = 20; y < h; y += 32) {
-      ctx.beginPath();
-      ctx.arc(x, y, 1, 0, Math.PI * 2);
-      ctx.fill();
-    }
-  }
-
-  const homeX = w / 2, homeY = h / 2;
   const health = nodeData?.health || 'offline';
-  const hColor = nodeColor(health);
+  const hColor = health === 'online' ? '#00c8ff' : health === 'stale' ? '#ffb800' : '#3d5070';
 
-  // Place devices in a circle around home
+  // ── Resolve home position ──────────────────────────────────────────
+  // Use Mapbox to project the node's geo coords, or fall back to centre
+  let homeX = w / 2, homeY = h / 2;
+  if (map && nodeData?.geo_lat && nodeData?.geo_lng) {
+    try {
+      const pt = map.project([nodeData.geo_lng, nodeData.geo_lat]);
+      homeX = pt.x; homeY = pt.y;
+    } catch(e) {}
+  }
+
+  // ── Resolve device positions ───────────────────────────────────────
   const devicePositions = [];
-  if (deviceList.length > 0) {
-    const radius = Math.min(w, h) * 0.34;
-    deviceList.forEach((d, i) => {
-      const angle = (i / deviceList.length) * Math.PI * 2 - Math.PI / 2;
-      devicePositions.push({
-        ...d,
-        x: homeX + Math.cos(angle) * radius,
-        y: homeY + Math.sin(angle) * radius,
-      });
-    });
-  } else {
-    // Demo: show placeholder devices around home
-    const placeholders = [
-      { name: "Child's Phone", presence: 'online', platform: 'android' },
-      { name: "iPad", presence: 'recently_seen', platform: 'ios' },
-      { name: "Laptop", presence: 'offline', platform: 'windows' },
-    ];
-    const radius = Math.min(w, h) * 0.34;
-    placeholders.forEach((d, i) => {
-      const angle = (i / placeholders.length) * Math.PI * 2 - Math.PI / 2;
-      devicePositions.push({
-        ...d,
-        x: homeX + Math.cos(angle) * radius,
-        y: homeY + Math.sin(angle) * radius,
-      });
-    });
-  }
+  const source = deviceList.length > 0 ? deviceList : [
+    { display_name: "Child's Phone", presence: 'online',        platform: 'android' },
+    { display_name: "iPad",          presence: 'recently_seen', platform: 'ipad'    },
+    { display_name: "Laptop",        presence: 'offline',       platform: 'laptop'  },
+  ];
 
-  // Build particles if needed
-  if (arcParticles.length === 0) {
-    buildArcParticles(homeX, homeY, devicePositions, health);
-  }
-
-  // Draw static arc lines
-  devicePositions.forEach(d => {
-    const dColor = presenceColor(d.presence);
-    const cx = (homeX + d.x) / 2 + (Math.random() < 0.5 ? 1 : -1) * 30;
-    const cy = Math.min(homeY, d.y) - 50;
-    drawArcLine(ctx, homeX, homeY, d.x, d.y, cx, cy, dColor,
-      d.presence === 'online' ? 0.15 : d.presence === 'recently_seen' ? 0.08 : 0.04);
+  source.forEach((d, i) => {
+    let dx, dy;
+    // Use real GPS if available and map is ready
+    if (map && d.longitude != null && d.latitude != null) {
+      try {
+        const pt = map.project([d.longitude, d.latitude]);
+        dx = pt.x; dy = pt.y;
+      } catch(e) {
+        dx = null;
+      }
+    }
+    // Fallback: radial positions around home
+    if (dx == null) {
+      const radius = Math.min(w * 0.32, h * 0.32, 240);
+      const angle = (i / source.length) * Math.PI * 2 - Math.PI / 2;
+      dx = homeX + Math.cos(angle) * radius;
+      dy = homeY + Math.sin(angle) * radius;
+    }
+    devicePositions.push({ ...d, x: dx, y: dy });
   });
 
-  // Update & draw arc particles
-  arcParticles.forEach(p => { p.update(); p.draw(ctx); });
+  if (trafficDots.length === 0) buildTrafficDots(homeX, homeY, devicePositions);
 
-  // Draw device nodes
+  // ── Beam lines ─────────────────────────────────────────────────────
   devicePositions.forEach(d => {
-    const dColor = presenceColor(d.presence);
-    const icon = d.platform === 'ios' ? '📱' : d.platform === 'android' ? '🤖' : '💻';
-    drawNode(ctx, d.x, d.y, d.display_name || d.name || 'Device', d.presence, dColor, 20);
+    const color = presenceColor(d.presence);
+    const online = d.presence === 'online';
+    const recent = d.presence === 'recently_seen';
+
+    if (online || recent) {
+      // Soft glow halo
+      ctx.beginPath();
+      ctx.moveTo(homeX, homeY);
+      ctx.lineTo(d.x, d.y);
+      ctx.strokeStyle = color + (online ? '2e' : '16');
+      ctx.lineWidth = 8;
+      ctx.setLineDash([]);
+      ctx.stroke();
+      // Sharp bright core
+      ctx.beginPath();
+      ctx.moveTo(homeX, homeY);
+      ctx.lineTo(d.x, d.y);
+      ctx.strokeStyle = color + (online ? '88' : '44');
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+    } else {
+      ctx.beginPath();
+      ctx.moveTo(homeX, homeY);
+      ctx.lineTo(d.x, d.y);
+      ctx.strokeStyle = 'rgba(255,255,255,0.06)';
+      ctx.lineWidth = 1;
+      ctx.setLineDash([4, 8]);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
   });
 
-  // New-device flash: burst ring on all nodes briefly
+  // ── Beam pulses ────────────────────────────────────────────────────
+  trafficDots.forEach(p => { p.update(); p.draw(ctx); });
+
+  // ── Device nodes ───────────────────────────────────────────────────
+  devicePositions.forEach(d => {
+    drawDeviceNode(ctx, d.x, d.y, d.display_name || d.name || 'Device', d.presence, d.platform);
+  });
+
+  // ── New device flash ───────────────────────────────────────────────
   if (Date.now() < newNodeFlashUntil) {
     const ft = 1 - (newNodeFlashUntil - Date.now()) / 2500;
     devicePositions.forEach(d => {
-      if (d.presence === 'online' || d.presence === 'recently_seen') {
-        const r = 20 + ft * 40;
-        const a = (1 - ft) * 0.7;
+      if (d.presence !== 'offline') {
         ctx.beginPath();
-        ctx.arc(d.x, d.y, r, 0, Math.PI * 2);
-        ctx.strokeStyle = '#00e5a0' + Math.floor(a * 255).toString(16).padStart(2,'0');
-        ctx.lineWidth = 2;
+        ctx.arc(d.x, d.y, 50 + ft * 40, 0, Math.PI * 2);
+        ctx.strokeStyle = '#00e5a0' + Math.floor((1 - ft) * 0.5 * 255).toString(16).padStart(2,'0');
+        ctx.lineWidth = 1.5;
         ctx.stroke();
       }
     });
   }
 
-  // Draw home node (on top)
-  drawNode(ctx, homeX, homeY, nodeData?.display_name || 'Home Node', nodeData?.public_ip || '', hColor, 34);
+  // ── Home node — always glowing ─────────────────────────────────────
+  const bloom = ctx.createRadialGradient(homeX, homeY, 0, homeX, homeY, 80);
+  bloom.addColorStop(0,   hColor + '30');
+  bloom.addColorStop(0.5, hColor + '0a');
+  bloom.addColorStop(1,   hColor + '00');
+  ctx.beginPath();
+  ctx.arc(homeX, homeY, 80, 0, Math.PI * 2);
+  ctx.fillStyle = bloom;
+  ctx.fill();
 
-  // Pulse ring on home if online
-  if (health === 'online') {
-    const t = (Date.now() % 2000) / 2000;
-    const r = 34 + t * 30;
-    const alpha = (1 - t) * 0.4;
+  [0, 0.5].forEach(offset => {
+    const t = ((Date.now() % 2800) / 2800 + offset) % 1;
+    const pr = 44 + t * 32;
+    const pa = (1 - t) * (health === 'online' ? 0.55 : 0.18);
     ctx.beginPath();
-    ctx.arc(homeX, homeY, r, 0, Math.PI * 2);
-    ctx.strokeStyle = hColor + Math.floor(alpha * 255).toString(16).padStart(2,'0');
-    ctx.lineWidth = 2;
+    ctx.arc(homeX, homeY, pr, 0, Math.PI * 2);
+    ctx.strokeStyle = hColor + Math.floor(pa * 255).toString(16).padStart(2,'0');
+    ctx.lineWidth = 1.5;
     ctx.stroke();
-  }
+  });
+
+  drawHouse(ctx, homeX, homeY, 28, hColor);
 
   animFrame = requestAnimationFrame(drawNetwork);
 }
 
+// Draw the house icon at centre
+function drawHouse(ctx, x, y, size, color) {
+  const s = size;
+  ctx.save();
+  ctx.translate(x, y);
+
+  // Glass card background
+  ctx.beginPath();
+  ctx.roundRect(-s * 1.1, -s * 1.1, s * 2.2, s * 2.2, 16);
+  ctx.fillStyle = 'rgba(255,255,255,0.05)';
+  ctx.fill();
+  ctx.strokeStyle = color + '50';
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+
+  // Roof (triangle)
+  ctx.beginPath();
+  ctx.moveTo(0, -s * 0.85);
+  ctx.lineTo(-s * 0.72, -s * 0.1);
+  ctx.lineTo(s * 0.72, -s * 0.1);
+  ctx.closePath();
+  ctx.fillStyle = color + '22';
+  ctx.fill();
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+
+  // Chimney
+  ctx.beginPath();
+  ctx.rect(s * 0.25, -s * 0.82, s * 0.18, s * 0.28);
+  ctx.fillStyle = color + '22';
+  ctx.fill();
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+
+  // Walls
+  ctx.beginPath();
+  ctx.rect(-s * 0.62, -s * 0.1, s * 1.24, s * 0.78);
+  ctx.fillStyle = color + '15';
+  ctx.fill();
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+
+  // Door
+  ctx.beginPath();
+  ctx.roundRect(-s * 0.16, s * 0.22, s * 0.32, s * 0.46, [4, 4, 0, 0]);
+  ctx.fillStyle = color + '30';
+  ctx.fill();
+  ctx.strokeStyle = color + '80';
+  ctx.lineWidth = 1;
+  ctx.stroke();
+
+  // Window left
+  ctx.beginPath();
+  ctx.rect(-s * 0.52, s * 0.04, s * 0.26, s * 0.22);
+  ctx.fillStyle = color + '25';
+  ctx.fill();
+  ctx.strokeStyle = color + '60';
+  ctx.lineWidth = 1;
+  ctx.stroke();
+
+  // Window right
+  ctx.beginPath();
+  ctx.rect(s * 0.26, s * 0.04, s * 0.26, s * 0.22);
+  ctx.fillStyle = color + '25';
+  ctx.fill();
+  ctx.strokeStyle = color + '60';
+  ctx.lineWidth = 1;
+  ctx.stroke();
+
+  ctx.restore();
+}
+
+// ── Device icon drawers (canvas equivalents of the RN SVG icons) ─────────────
+
+function drawIconPhone(ctx, color, s) {
+  // Body
+  ctx.beginPath();
+  ctx.roundRect(-s*0.42, -s*0.88, s*0.84, s*1.75, s*0.18);
+  ctx.fillStyle = color + '18'; ctx.fill();
+  ctx.strokeStyle = color; ctx.lineWidth = 1.4; ctx.stroke();
+  // Screen
+  ctx.beginPath();
+  ctx.roundRect(-s*0.3, -s*0.67, s*0.6, s*1.17, s*0.08);
+  ctx.fillStyle = color + '22'; ctx.fill();
+  ctx.strokeStyle = color + '80'; ctx.lineWidth = 0.9; ctx.stroke();
+  // Home bar
+  ctx.beginPath();
+  ctx.moveTo(-s*0.18, s*0.7); ctx.lineTo(s*0.18, s*0.7);
+  ctx.strokeStyle = color; ctx.lineWidth = 1.4; ctx.lineCap = 'round'; ctx.stroke();
+  // Camera dot
+  ctx.beginPath();
+  ctx.arc(0, -s*0.78, s*0.07, 0, Math.PI*2);
+  ctx.fillStyle = color + 'bb'; ctx.fill();
+}
+
+function drawIconTablet(ctx, color, s) {
+  // Body
+  ctx.beginPath();
+  ctx.roundRect(-s*0.58, -s*0.88, s*1.16, s*1.75, s*0.16);
+  ctx.fillStyle = color + '18'; ctx.fill();
+  ctx.strokeStyle = color; ctx.lineWidth = 1.4; ctx.stroke();
+  // Screen
+  ctx.beginPath();
+  ctx.roundRect(-s*0.44, -s*0.67, s*0.88, s*1.25, s*0.08);
+  ctx.fillStyle = color + '22'; ctx.fill();
+  ctx.strokeStyle = color + '80'; ctx.lineWidth = 0.9; ctx.stroke();
+  // Home bar
+  ctx.beginPath();
+  ctx.moveTo(-s*0.2, s*0.72); ctx.lineTo(s*0.2, s*0.72);
+  ctx.strokeStyle = color; ctx.lineWidth = 1.4; ctx.lineCap = 'round'; ctx.stroke();
+  // Camera
+  ctx.beginPath();
+  ctx.arc(0, -s*0.78, s*0.07, 0, Math.PI*2);
+  ctx.fillStyle = color + 'bb'; ctx.fill();
+}
+
+function drawIconLaptop(ctx, color, s) {
+  // Screen lid
+  ctx.beginPath();
+  ctx.roundRect(-s*0.75, -s*0.88, s*1.5, s*1.0, s*0.12);
+  ctx.fillStyle = color + '18'; ctx.fill();
+  ctx.strokeStyle = color; ctx.lineWidth = 1.4; ctx.stroke();
+  // Screen bezel
+  ctx.beginPath();
+  ctx.roundRect(-s*0.58, -s*0.75, s*1.16, s*0.75, s*0.07);
+  ctx.fillStyle = color + '22'; ctx.fill();
+  ctx.strokeStyle = color + '80'; ctx.lineWidth = 0.9; ctx.stroke();
+  // Base
+  ctx.beginPath();
+  ctx.moveTo(-s*0.92, s*0.12); ctx.lineTo(-s*0.75, s*0.12);
+  ctx.lineTo(-s*0.75, s*0.38); ctx.lineTo(s*0.75, s*0.38);
+  ctx.lineTo(s*0.75, s*0.12); ctx.lineTo(s*0.92, s*0.12);
+  ctx.fillStyle = color + '15'; ctx.fill();
+  ctx.strokeStyle = color; ctx.lineWidth = 1.4; ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.stroke();
+  // Trackpad
+  ctx.beginPath();
+  ctx.roundRect(-s*0.2, s*0.16, s*0.4, s*0.16, s*0.04);
+  ctx.fillStyle = color + '28'; ctx.fill();
+  ctx.strokeStyle = color + '70'; ctx.lineWidth = 0.9; ctx.stroke();
+}
+
+function drawIconGamepad(ctx, color, s) {
+  // Body shape
+  ctx.beginPath();
+  ctx.moveTo(-s*0.5, -s*0.1);
+  ctx.bezierCurveTo(-s*0.92, -s*0.1, -s*1.0, s*0.6, -s*0.5, s*0.75);
+  ctx.lineTo(s*0.5, s*0.75);
+  ctx.bezierCurveTo(s*1.0, s*0.6, s*0.92, -s*0.1, s*0.5, -s*0.1);
+  ctx.closePath();
+  ctx.fillStyle = color + '18'; ctx.fill();
+  ctx.strokeStyle = color; ctx.lineWidth = 1.4; ctx.stroke();
+  // D-pad vertical
+  ctx.beginPath();
+  ctx.moveTo(-s*0.5, s*0.18); ctx.lineTo(-s*0.5, s*0.58);
+  ctx.strokeStyle = color; ctx.lineWidth = 1.4; ctx.lineCap = 'round'; ctx.stroke();
+  // D-pad horizontal
+  ctx.beginPath();
+  ctx.moveTo(-s*0.7, s*0.38); ctx.lineTo(-s*0.3, s*0.38);
+  ctx.stroke();
+  // Button circles
+  [[s*0.5, s*0.25], [s*0.7, s*0.4], [s*0.5, s*0.55], [s*0.3, s*0.4]].forEach(([bx,by]) => {
+    ctx.beginPath();
+    ctx.arc(bx, by, s*0.1, 0, Math.PI*2);
+    ctx.fillStyle = color + '30'; ctx.fill();
+    ctx.strokeStyle = color; ctx.lineWidth = 1.1; ctx.stroke();
+  });
+}
+
+function drawDeviceIconAt(ctx, platform, color, s) {
+  const p = (platform || '').toLowerCase();
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  if (p === 'laptop' || p === 'mac' || p === 'windows' || p === 'macos' || p === 'linux') {
+    drawIconLaptop(ctx, color, s);
+  } else if (p === 'ipad' || p === 'tablet' || p === 'android_tablet') {
+    drawIconTablet(ctx, color, s);
+  } else if (p === 'game' || p === 'gamepad' || p === 'console') {
+    drawIconGamepad(ctx, color, s);
+  } else {
+    drawIconPhone(ctx, color, s);
+  }
+}
+
+// Draw a device node — glass card with correct icon
+function drawDeviceNode(ctx, x, y, label, presence, platform) {
+  const color = presenceColor(presence);
+  const cw = 100, ch = 68, r = 14;
+  const iconS = 9; // icon scale unit
+  const iconX = -cw/2 + 22;
+  const iconY = -4;
+
+  ctx.save();
+  ctx.translate(x, y);
+
+  // Card background
+  ctx.beginPath();
+  ctx.roundRect(-cw/2, -ch/2, cw, ch, r);
+  ctx.fillStyle = 'rgba(255,255,255,0.05)';
+  ctx.fill();
+  ctx.strokeStyle = presence === 'offline' ? 'rgba(255,255,255,0.07)' : color + '50';
+  ctx.lineWidth = 1;
+  ctx.stroke();
+
+  // Icon (translated to left side of card)
+  ctx.save();
+  ctx.translate(iconX, iconY);
+  drawDeviceIconAt(ctx, platform, color, iconS);
+  ctx.restore();
+
+  // Device name (right of icon)
+  const textX = iconX + iconS + 6;
+  ctx.fillStyle = presence === 'offline' ? '#3d5070' : '#e8edf8';
+  ctx.font = "600 11px 'IBM Plex Mono', monospace";
+  ctx.textAlign = 'left';
+  const maxW = cw/2 - 4;
+  let name = label || 'Device';
+  while (ctx.measureText(name).width > maxW && name.length > 4) name = name.slice(0, -1);
+  ctx.fillText(name, textX, -8);
+
+  // Presence label
+  ctx.fillStyle = color + 'aa';
+  ctx.font = "10px 'IBM Plex Mono', monospace";
+  ctx.fillText(presence === 'recently_seen' ? 'recent' : presence, textX, 8);
+
+  // Status dot (bottom-right of card)
+  ctx.beginPath();
+  ctx.arc(cw/2 - 12, ch/2 - 12, 4, 0, Math.PI*2);
+  ctx.fillStyle = color;
+  ctx.fill();
+
+  ctx.restore();
+}
+
+
 // ── Supabase ────────────────────────────────────────────────────────────────
 
 window.addEventListener('DOMContentLoaded', () => {
+  canvas = document.getElementById('networkCanvas');
+  ctx = canvas.getContext('2d');
   resizeCanvas();
-  window.addEventListener('resize', () => { resizeCanvas(); arcParticles = []; });
+  window.addEventListener('resize', () => { resizeCanvas(); arcParticles = []; trafficDots = []; });
   const saved = JSON.parse(localStorage.getItem('ss_config') || '{}');
   if (saved.url) document.getElementById('inputUrl').value = saved.url;
   if (saved.key) document.getElementById('inputKey').value = saved.key;
@@ -464,10 +804,14 @@ async function connect() {
     localStorage.setItem('ss_config', JSON.stringify({ url, key, family: fid }));
     document.getElementById('configOverlay').style.display = 'none';
     document.getElementById('dashboard').style.display = 'block';
-    drawNetwork();
+    // Defer until browser has laid out the dashboard so clientWidth is real
+    requestAnimationFrame(() => { resizeCanvas(); drawNetwork(); });
+    initMap();
     await refresh();
     setInterval(refresh, 15000);
     subscribeRealtime();
+    subscribeLocationRealtime();
+    subscribeGeofenceRealtime();
   } catch (e) {
     errEl.textContent = 'Connection failed: ' + e.message;
     errEl.style.display = 'block';
@@ -476,7 +820,11 @@ async function connect() {
 
 async function refresh() {
   await Promise.all([loadNode(), loadDevices()]);
+  await loadLocationData();
+  await loadGeofences();
+  await loadAlerts();
   arcParticles = [];
+  trafficDots = [];
   document.getElementById('lastUpdated').textContent = 'Updated ' + new Date().toLocaleTimeString();
 }
 
@@ -502,6 +850,52 @@ async function loadNode() {
     </div>`;
 }
 
+// ── Inline SVG icon strings for device list rows ─────────────────────────────
+function deviceSVG(platform, color = '#00d4ff', size = 20) {
+  const p = (platform || '').toLowerCase();
+  const c = color;
+  const s = size;
+  const fill = c + '18';
+  const stroke = c;
+  const dim = c + '70';
+
+  if (p === 'laptop' || p === 'mac' || p === 'macos' || p === 'windows' || p === 'linux') {
+    return `<svg width="${s}" height="${s}" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <rect x="3" y="3" width="18" height="12" rx="1.5" fill="${fill}" stroke="${stroke}" stroke-width="1.5" stroke-linejoin="round"/>
+      <rect x="5" y="4.5" width="14" height="9" rx="0.8" fill="${c}22" stroke="${dim}" stroke-width="1"/>
+      <path d="M1 15.5H2.5V17.5C2.5 18.05 2.95 18.5 3.5 18.5H20.5C21.05 18.5 21.5 18.05 21.5 17.5V15.5H23" stroke="${stroke}" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" fill="${fill}"/>
+      <rect x="9.5" y="16" width="5" height="2" rx="0.5" fill="${c}25" stroke="${dim}" stroke-width="0.8"/>
+    </svg>`;
+  }
+
+  if (p === 'ipad' || p === 'tablet' || p === 'android_tablet') {
+    return `<svg width="${s}" height="${s}" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <rect x="3" y="1.5" width="18" height="21" rx="2.5" fill="${fill}" stroke="${stroke}" stroke-width="1.5" stroke-linejoin="round"/>
+      <rect x="5.5" y="4" width="13" height="15" rx="1" fill="${c}22" stroke="${dim}" stroke-width="1"/>
+      <line x1="10.5" y1="20.5" x2="13.5" y2="20.5" stroke="${stroke}" stroke-width="1.5" stroke-linecap="round"/>
+      <circle cx="12" cy="2.6" r="0.7" fill="${dim}"/>
+    </svg>`;
+  }
+
+  if (p === 'game' || p === 'gamepad' || p === 'console') {
+    return `<svg width="${s}" height="${s}" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <path d="M6 8C3.5 8 2 10 2 12.5C2 15.5 3.5 18 6 18C7.5 18 8.5 17 9.5 16H14.5C15.5 17 16.5 18 18 18C20.5 18 22 15.5 22 12.5C22 10 20.5 8 18 8H6Z" fill="${fill}" stroke="${stroke}" stroke-width="1.5" stroke-linejoin="round"/>
+      <line x1="7" y1="10.5" x2="7" y2="15.5" stroke="${stroke}" stroke-width="1.5" stroke-linecap="round"/>
+      <line x1="4.5" y1="13" x2="9.5" y2="13" stroke="${stroke}" stroke-width="1.5" stroke-linecap="round"/>
+      <circle cx="17" cy="12" r="1.1" fill="${c}25" stroke="${stroke}" stroke-width="1.2"/>
+      <circle cx="19.2" cy="13.5" r="1.1" fill="${c}25" stroke="${stroke}" stroke-width="1.2"/>
+    </svg>`;
+  }
+
+  // Default: phone (ios / android / anything else)
+  return `<svg width="${s}" height="${s}" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <rect x="5" y="1.5" width="14" height="21" rx="2.5" fill="${fill}" stroke="${stroke}" stroke-width="1.5" stroke-linejoin="round"/>
+    <rect x="7" y="4" width="10" height="14" rx="1" fill="${c}22" stroke="${dim}" stroke-width="1"/>
+    <line x1="10" y1="20" x2="14" y2="20" stroke="${stroke}" stroke-width="1.5" stroke-linecap="round"/>
+    <circle cx="12" cy="2.6" r="0.7" fill="${dim}"/>
+  </svg>`;
+}
+
 async function loadDevices() {
   const { data: overview } = await sb.from('family_presence_overview').select('*').eq('family_id', familyId).maybeSingle();
   if (overview) {
@@ -511,18 +905,21 @@ async function loadDevices() {
     document.getElementById('countOffline').textContent = overview.devices_offline ?? 0;
   }
   const { data: devices } = await sb.from('device_presence_current').select('*').eq('family_id', familyId).order('last_seen_at', { ascending: false });
-  deviceList = devices || [];
+  const { data: devicesMeta } = await sb.from('devices').select('device_id, platform').eq('family_id', familyId);
+  const metaMap = Object.fromEntries((devicesMeta || []).map(d => [d.device_id, d]));
+  deviceList = (devices || []).map(d => ({ ...d, platform: d.platform || metaMap[d.device_id]?.platform || 'android' }));
   const grid = document.getElementById('devicesGrid');
   if (!deviceList.length) {
-    grid.innerHTML = `<div class="empty-state"><div class="empty-icon">📱</div><h3>No devices enrolled</h3><p>Devices will appear here once they connect through the Home Node.</p></div>`;
+    grid.innerHTML = `<div class="empty-state"><div class="empty-icon"><svg width="36" height="36" viewBox="0 0 24 24" fill="none"><rect x="5" y="1.5" width="14" height="21" rx="2.5" fill="#3d507018" stroke="#3d5070" stroke-width="1.5" stroke-linejoin="round"/><rect x="7" y="4" width="10" height="14" rx="1" fill="#3d507022" stroke="#3d507070" stroke-width="1"/><line x1="10" y1="20" x2="14" y2="20" stroke="#3d5070" stroke-width="1.5" stroke-linecap="round"/><circle cx="12" cy="2.6" r="0.7" fill="#3d5070"/></svg></div><h3>No devices enrolled</h3><p>Devices will appear here once they connect through the Home Node.</p></div>`;
     return;
   }
   grid.innerHTML = deviceList.map(d => {
-    const icon = d.platform === 'ios' ? '📱' : d.platform === 'android' ? '🤖' : d.platform === 'windows' ? '💻' : '📟';
+    const pColor = presenceColor(d.presence);
+    const icon = deviceSVG(d.platform, pColor);
     const lastSeen = d.last_seen_at ? timeAgo(d.last_seen_at) : 'Never';
     const trustColor = d.trust_state === 'enrolled' ? 'var(--green)' : d.trust_state === 'pending' ? 'var(--amber)' : 'var(--muted)';
     return `<div class="device-row">
-      <div class="device-icon">${icon}</div>
+      <div class="device-icon" style="background:${pColor}18;border-color:${pColor}40">${icon}</div>
       <div><div class="device-name">${d.display_name||'Unknown'}</div><div class="device-meta">${d.platform||'unknown'} · ${d.device_id?.slice(0,8)}...</div></div>
       <div><span class="presence-badge ${d.presence}"><span class="presence-dot"></span>${d.presence?.replace('_',' ')}</span></div>
       <div class="device-col">${lastSeen}</div>
@@ -561,8 +958,598 @@ function timeAgo(iso) {
   return `${Math.floor(s/86400)}d ago`;
 }
 
-function nodeColor(h) { return h==='online'?'#00e5a0':h==='stale'?'#ffb800':'#ff4444'; }
-function presenceColor(p) { return p==='online'?'#00d4ff':p==='recently_seen'?'#ffb800':'#444e62'; }
+
+// ── Geofences ────────────────────────────────────────────────────────────────
+
+let geofenceList = [];
+let geofenceAlerts = [];
+let drawerMap = null;
+let drawerMarkers = [];
+let drawerCircle = null;
+let gfType = 'circle';
+let tripwirePoints = [];
+
+async function loadGeofences() {
+  if (!sb || !familyId) return;
+  const { data } = await sb.from('geofences').select('*').eq('family_id', familyId).order('created_at', { ascending: false });
+  geofenceList = data || [];
+  renderGeofenceList();
+  renderGeofencesOnMap();
+}
+
+async function loadAlerts() {
+  if (!sb || !familyId) return;
+  const { data } = await sb.from('geofence_alerts').select('*').eq('family_id', familyId)
+    .order('created_at', { ascending: false }).limit(20);
+  geofenceAlerts = data || [];
+  renderAlerts();
+}
+
+function renderGeofenceList() {
+  const el = document.getElementById('geofenceList');
+  if (!geofenceList.length) { el.innerHTML = '<div style="color:var(--muted);font-size:12px">No geofences yet. Add one to start tracking zone crossings.</div>'; return; }
+  el.innerHTML = geofenceList.map(gf => `
+    <div class="geofence-row">
+      <div class="geofence-row-icon">${gf.type === 'circle' ? '◉' : '⟶'}</div>
+      <div style="flex:1">
+        <div class="geofence-row-name">${gf.name}</div>
+        <div class="geofence-row-meta">${gf.type === 'circle' ? `Circle · ${gf.radius_metres}m radius` : 'Tripwire'} · Alert on ${gf.alert_on}</div>
+      </div>
+      <button class="geofence-toggle ${gf.is_active ? 'on' : 'off'}" onclick="toggleGeofence('${gf.id}',${gf.is_active})" title="${gf.is_active ? 'Active' : 'Paused'}">
+        <span style="font-size:9px;color:${gf.is_active ? '#00e5a0' : 'var(--muted)'};">${gf.is_active ? 'ON' : 'OFF'}</span>
+      </button>
+      <button class="geofence-delete" onclick="deleteGeofence('${gf.id}')">Delete</button>
+    </div>
+  `).join('');
+}
+
+function renderAlerts() {
+  const section = document.getElementById('alertsSection');
+  const list = document.getElementById('alertsList');
+  const badge = document.getElementById('alertBadge');
+  const unread = geofenceAlerts.filter(a => !a.is_read).length;
+
+  if (!geofenceAlerts.length) { section.style.display = 'none'; return; }
+  section.style.display = 'block';
+  badge.textContent = unread ? `${unread} new` : '';
+  badge.style.display = unread ? 'inline-block' : 'none';
+
+  list.innerHTML = geofenceAlerts.map(a => `
+    <div class="alert-row ${a.is_read ? 'read' : ''}" id="alert-${a.id}">
+      <div class="alert-icon" style="background:${a.event_type === 'enter' ? '#00e5a015' : '#ffb80015'};border:1px solid ${a.event_type === 'enter' ? '#00e5a030' : '#ffb80030'}">
+        ${a.event_type === 'enter' ? '▼' : '▲'}
+      </div>
+      <div class="alert-text">
+        <span style="font-weight:600">${a.device_name}</span>
+        <span style="color:var(--dim)"> ${a.event_type === 'enter' ? 'arrived at' : 'left'} </span>
+        <span style="color:${a.event_type === 'enter' ? 'var(--green)' : 'var(--amber)'}">${a.geofence_name}</span>
+        <div class="alert-time">${timeAgo(a.created_at)}</div>
+      </div>
+      ${!a.is_read ? `<button onclick="markAlertRead('${a.id}')" style="font-size:10px;color:var(--muted);background:none;border:none;cursor:pointer;padding:4px 8px;flex-shrink:0">✕</button>` : ''}
+    </div>
+  `).join('');
+}
+
+function renderGeofencesOnMap() {
+  if (!map || !map.loaded()) return;
+  geofenceList.filter(gf => gf.is_active).forEach(gf => {
+    if (gf.type === 'circle') {
+      const srcId = `gfzone-${gf.id}`;
+      const geo = { type: 'Feature', geometry: { type: 'Point', coordinates: [gf.longitude, gf.latitude] } };
+      if (!map.getSource(srcId)) {
+        map.addSource(srcId, { type: 'geojson', data: geo });
+        map.addLayer({ id: `${srcId}-fill`, type: 'circle', source: srcId,
+          paint: { 'circle-radius': { stops: [[0,0],[20, gf.radius_metres / 0.075]], base: 2 },
+            'circle-color': '#00d4ff', 'circle-opacity': 0.06,
+            'circle-stroke-width': 1.5, 'circle-stroke-color': '#00d4ff', 'circle-stroke-opacity': 0.3 }
+        });
+      }
+    }
+    if (gf.type === 'tripwire') {
+      const srcId = `gftripwire-${gf.id}`;
+      const geo = { type: 'Feature', geometry: { type: 'LineString', coordinates: [[gf.lng_a, gf.lat_a],[gf.lng_b, gf.lat_b]] }};
+      if (!map.getSource(srcId)) {
+        map.addSource(srcId, { type: 'geojson', data: geo });
+        map.addLayer({ id: `${srcId}-line`, type: 'line', source: srcId,
+          paint: { 'line-color': '#ffb800', 'line-width': 2, 'line-dasharray': [3,2] }
+        });
+      }
+    }
+  });
+}
+
+function openGeofenceDrawer() {
+  const drawer = document.getElementById('geofenceDrawer');
+  drawer.style.display = 'flex';
+  setTimeout(() => initDrawerMap(), 100);
+}
+
+function closeGeofenceDrawer() {
+  document.getElementById('geofenceDrawer').style.display = 'none';
+  drawerMarkers.forEach(m => m.remove());
+  drawerMarkers = [];
+  tripwirePoints = [];
+  if (drawerMap) { drawerMap.remove(); drawerMap = null; }
+}
+
+function initDrawerMap() {
+  if (drawerMap) return;
+  mapboxgl.accessToken = MAPBOX_TOKEN;
+  const centre = Object.values(locationData)[0] || { longitude: 151.2093, latitude: -33.8688 };
+  drawerMap = new mapboxgl.Map({
+    container: 'drawerMap',
+    style: 'mapbox://styles/mapbox/dark-v11',
+    center: [centre.longitude, centre.latitude],
+    zoom: 14,
+    attributionControl: false,
+  });
+
+  drawerMap.on('click', (e) => {
+    const { lng, lat } = e.lngLat;
+    if (gfType === 'circle') {
+      drawerMarkers.forEach(m => m.remove()); drawerMarkers = [];
+      const el = document.createElement('div');
+      el.style.cssText = 'width:12px;height:12px;border-radius:50%;background:#00d4ff;border:2px solid #fff;';
+      drawerMarkers.push(new mapboxgl.Marker({ element: el }).setLngLat([lng, lat]).addTo(drawerMap));
+      drawerMap._circleCenter = { lat, lng };
+    } else {
+      if (tripwirePoints.length >= 2) {
+        drawerMarkers.forEach(m => m.remove()); drawerMarkers = []; tripwirePoints = [];
+      }
+      tripwirePoints.push({ lat, lng });
+      const el = document.createElement('div');
+      el.style.cssText = `width:10px;height:10px;border-radius:50%;background:#ffb800;border:2px solid #fff;`;
+      drawerMarkers.push(new mapboxgl.Marker({ element: el }).setLngLat([lng, lat]).addTo(drawerMap));
+
+      if (tripwirePoints.length === 2) {
+        const srcId = 'drawer-tripwire';
+        const geo = { type: 'Feature', geometry: { type: 'LineString', coordinates: [[tripwirePoints[0].lng, tripwirePoints[0].lat],[tripwirePoints[1].lng, tripwirePoints[1].lat]] }};
+        if (drawerMap.getSource(srcId)) drawerMap.getSource(srcId).setData(geo);
+        else { drawerMap.addSource(srcId, { type: 'geojson', data: geo }); drawerMap.addLayer({ id: 'drawer-tripwire-line', type: 'line', source: srcId, paint: { 'line-color': '#ffb800', 'line-width': 2, 'line-dasharray': [3,2] }}); }
+      }
+      document.getElementById('tripwireCoords').textContent = tripwirePoints.length === 1
+        ? 'Point A set. Click point B.' : `Line set: ${tripwirePoints[0].lat.toFixed(5)}, ${tripwirePoints[0].lng.toFixed(5)} → ${tripwirePoints[1].lat.toFixed(5)}, ${tripwirePoints[1].lng.toFixed(5)}`;
+    }
+  });
+}
+
+function selectGfType(type) {
+  gfType = type;
+  document.getElementById('gfTypeCircle').classList.toggle('active', type === 'circle');
+  document.getElementById('gfTypeTripwire').classList.toggle('active', type === 'tripwire');
+  document.getElementById('circleFields').style.display = type === 'circle' ? 'block' : 'none';
+  document.getElementById('tripwireFields').style.display = type === 'tripwire' ? 'block' : 'none';
+}
+
+async function saveGeofence() {
+  const name = document.getElementById('gfName').value.trim();
+  if (!name) { alert('Please enter a name.'); return; }
+
+  const payload = { family_id: familyId, name, type: gfType, alert_on: document.getElementById('gfAlertOn').value, is_active: true };
+
+  if (gfType === 'circle') {
+    const c = drawerMap?._circleCenter;
+    if (!c) { alert('Click the map to set the centre point.'); return; }
+    payload.latitude = c.lat; payload.longitude = c.lng;
+    payload.radius_metres = parseInt(document.getElementById('gfRadius').value);
+  } else {
+    if (tripwirePoints.length < 2) { alert('Click two points on the map to define the tripwire.'); return; }
+    payload.lat_a = tripwirePoints[0].lat; payload.lng_a = tripwirePoints[0].lng;
+    payload.lat_b = tripwirePoints[1].lat; payload.lng_b = tripwirePoints[1].lng;
+  }
+
+  const { error } = await sb.from('geofences').insert(payload);
+  if (error) { alert('Error saving: ' + error.message); return; }
+  closeGeofenceDrawer();
+  await loadGeofences();
+}
+
+async function toggleGeofence(id, currentlyActive) {
+  await sb.from('geofences').update({ is_active: !currentlyActive }).eq('id', id);
+  await loadGeofences();
+}
+
+async function deleteGeofence(id) {
+  if (!confirm('Delete this geofence?')) return;
+  await sb.from('geofences').delete().eq('id', id);
+  await loadGeofences();
+}
+
+async function markAlertRead(id) {
+  await sb.from('geofence_alerts').update({ is_read: true }).eq('id', id);
+  await loadAlerts();
+}
+
+async function markAllAlertsRead() {
+  await sb.from('geofence_alerts').update({ is_read: true }).eq('family_id', familyId).eq('is_read', false);
+  await loadAlerts();
+}
+
+function subscribeGeofenceRealtime() {
+  if (!sb || !familyId) return;
+  sb.channel('geofence-alerts-live')
+    .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'geofence_alerts', filter: `family_id=eq.${familyId}` },
+      () => loadAlerts())
+    .subscribe();
+}
+
+
+const MAPBOX_TOKEN = 'pk.eyJ1IjoidGF0dGUxMTgyIiwiYSI6ImNtbW52MXNhajA3MnYycm9yeHA5aHRndXcifQ.oBWmFS4QcjLXqUtRaeiRXw';
+let map = null;
+let mapMarkers = {};        // device_id → mapboxgl.Marker
+let mapTrailLayers = {};    // device_id → layer id
+let mapTrailSources = {};   // device_id → source id
+let locationData = {};      // device_id → child_location_current row
+let trailData = {};         // device_id → array of [lng, lat]
+let showTrail = true;
+let selectedDevice = null;
+let locatingDeviceId = null;
+
+const DEVICE_COLORS = ['#00d4ff','#00e5a0','#a855f7','#ffb800','#ff6b9d','#ff8c42'];
+
+function initMap() {
+  if (map) return;
+  mapboxgl.accessToken = MAPBOX_TOKEN;
+  map = new mapboxgl.Map({
+    container: 'locationMap',
+    style: 'mapbox://styles/mapbox/dark-v11',
+    center: [0, 20],
+    zoom: 2,
+    attributionControl: false,
+  });
+  map.addControl(new mapboxgl.NavigationControl({ showCompass: false }), 'bottom-right');
+  map.on('load', () => {
+    loadLocationData();
+    // Geo-locate the node's public IP so the house pins to the right place
+    geolocateNodeIP();
+  });
+  // Redraw canvas arcs whenever map moves so they stay locked to geo positions
+  map.on('move',   () => { trafficDots = []; });
+  map.on('zoom',   () => { trafficDots = []; });
+  map.on('resize', () => { resizeCanvas(); trafficDots = []; });
+}
+
+async function geolocateNodeIP() {
+  const ip = nodeData?.public_ip;
+  if (!ip || ip === 'unknown') return;
+  try {
+    const r = await fetch(`https://ipapi.co/${ip}/json/`);
+    const d = await r.json();
+    if (d.latitude && d.longitude) {
+      if (!nodeData) nodeData = {};
+      nodeData.geo_lat = d.latitude;
+      nodeData.geo_lng = d.longitude;
+    }
+  } catch(e) {}
+}
+
+function deviceColor(deviceId) {
+  const ids = Object.keys(locationData);
+  const idx = ids.indexOf(deviceId) % DEVICE_COLORS.length;
+  return DEVICE_COLORS[Math.max(0, idx)];
+}
+
+function isStale(recordedAt) {
+  return new Date(recordedAt) < new Date(Date.now() - 15 * 60 * 1000);
+}
+
+function activityLabel(speed) {
+  if (speed == null) return null;
+  if (speed < 0.5) return 'Still';
+  if (speed < 2.2) return 'Walking';
+  if (speed < 8) return 'Cycling';
+  if (speed < 30) return 'Driving';
+  return 'Highway';
+}
+
+function activityIcon(speed) {
+  if (speed == null) return '';
+  if (speed < 0.5) return '●';
+  if (speed < 2.2) return '⬆';
+  if (speed < 8) return '⬆';
+  if (speed < 30) return '⬆';
+  return '⬆';
+}
+
+async function loadLocationData() {
+  if (!sb || !familyId) return;
+
+  const { data } = await sb
+    .from('child_location_current')
+    .select('*')
+    .eq('family_id', familyId);
+
+  if (!data || !data.length) return;
+
+  // Clear existing
+  data.forEach(loc => {
+    locationData[loc.device_id] = loc;
+  });
+
+  // Merge coordinates into deviceList so the canvas overlay can project them
+  deviceList = deviceList.map(d => {
+    const loc = locationData[d.device_id];
+    if (loc) return { ...d, latitude: loc.latitude, longitude: loc.longitude };
+    return d;
+  });
+  trafficDots = []; // rebuild arcs with updated positions
+
+  await loadTrailData();
+  renderMapPins();
+  renderMapDevicePanel();
+  fitMapToPins();
+}
+
+async function loadTrailData() {
+  if (!sb || !familyId) return;
+  const deviceIds = Object.keys(locationData);
+  if (!deviceIds.length) return;
+
+  // Load last 30 locations per device for breadcrumb trail
+  for (const deviceId of deviceIds) {
+    const { data } = await sb
+      .from('device_locations')
+      .select('latitude, longitude, recorded_at, speed')
+      .eq('device_id', deviceId)
+      .order('recorded_at', { ascending: false })
+      .limit(30);
+
+    if (data) {
+      // Reverse so oldest → newest for the line
+      trailData[deviceId] = data.reverse().map(d => [d.longitude, d.latitude]);
+    }
+  }
+}
+
+function renderMapPins() {
+  if (!map || !map.loaded()) return;
+
+  Object.entries(locationData).forEach(([deviceId, loc]) => {
+    const color = deviceColor(deviceId);
+    const stale = isStale(loc.recorded_at);
+    const pinColor = stale ? '#ffb800' : color;
+    const device = deviceList.find(d => d.device_id === deviceId);
+    const name = device?.display_name || 'Device';
+
+    // ── Accuracy confidence ring ─────────────────────────────
+    const ringSourceId = `accuracy-${deviceId}`;
+    const ringLayerId = `accuracy-layer-${deviceId}`;
+
+    const accuracyGeoJson = {
+      type: 'Feature',
+      geometry: { type: 'Point', coordinates: [loc.longitude, loc.latitude] },
+      properties: {}
+    };
+
+    if (map.getSource(ringSourceId)) {
+      map.getSource(ringSourceId).setData(accuracyGeoJson);
+    } else {
+      map.addSource(ringSourceId, { type: 'geojson', data: accuracyGeoJson });
+      map.addLayer({
+        id: ringLayerId,
+        type: 'circle',
+        source: ringSourceId,
+        paint: {
+          'circle-radius': {
+            stops: [[0, 0], [20, (loc.accuracy || 20) / 0.075]],
+            base: 2,
+          },
+          'circle-color': pinColor,
+          'circle-opacity': 0.08,
+          'circle-stroke-width': 1,
+          'circle-stroke-color': pinColor,
+          'circle-stroke-opacity': stale ? 0.2 : 0.35,
+        }
+      });
+    }
+
+    // ── Breadcrumb trail ────────────────────────────────────
+    const trail = trailData[deviceId] || [];
+    if (trail.length > 1) {
+      const trailSourceId = `trail-${deviceId}`;
+      const trailLayerId = `trail-layer-${deviceId}`;
+      mapTrailSources[deviceId] = trailSourceId;
+      mapTrailLayers[deviceId] = trailLayerId;
+
+      const trailGeo = {
+        type: 'Feature',
+        geometry: { type: 'LineString', coordinates: trail }
+      };
+
+      if (map.getSource(trailSourceId)) {
+        map.getSource(trailSourceId).setData(trailGeo);
+      } else {
+        map.addSource(trailSourceId, { type: 'geojson', data: trailGeo });
+        map.addLayer({
+          id: trailLayerId,
+          type: 'line',
+          source: trailSourceId,
+          layout: { 'line-join': 'round', 'line-cap': 'round' },
+          paint: {
+            'line-color': color,
+            'line-width': 2,
+            'line-opacity': showTrail ? 0.5 : 0,
+            'line-dasharray': [2, 2],
+          }
+        });
+      }
+
+      // Update trail visibility
+      if (map.getLayer(trailLayerId)) {
+        map.setPaintProperty(trailLayerId, 'line-opacity', showTrail ? 0.5 : 0);
+      }
+    }
+
+    // ── Pin marker ──────────────────────────────────────────
+    const activity = activityLabel(loc.speed);
+    const el = document.createElement('div');
+    el.style.cssText = `
+      width: 36px; height: 36px; border-radius: 50%;
+      background: #0d1117;
+      border: 2.5px solid ${pinColor};
+      box-shadow: 0 0 0 4px ${pinColor}30;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 14px; cursor: pointer;
+      transition: transform 0.2s;
+      font-family: 'IBM Plex Mono', monospace;
+      color: ${pinColor};
+      font-weight: 600;
+      font-size: 11px;
+    `;
+    el.textContent = name.slice(0, 2).toUpperCase();
+    el.title = name;
+
+    el.addEventListener('mouseenter', () => el.style.transform = 'scale(1.15)');
+    el.addEventListener('mouseleave', () => el.style.transform = 'scale(1)');
+    el.addEventListener('click', () => selectDevice(deviceId));
+
+    // Popup
+    const battery = loc.battery_level != null ? `${loc.battery_level}%${loc.is_charging ? ' ⚡' : ''}` : '—';
+    const lastSeen = timeAgo(loc.recorded_at);
+    const popup = new mapboxgl.Popup({ offset: 20, className: 'ss-popup' })
+      .setHTML(`
+        <div style="font-family:'IBM Plex Mono',monospace;font-size:12px;color:#e2eaf8;min-width:160px">
+          <div style="font-weight:600;font-size:13px;margin-bottom:8px;color:${pinColor}">${name}</div>
+          <div style="color:#8899bb;margin-bottom:4px">Last seen: <span style="color:#e2eaf8">${lastSeen}</span></div>
+          ${activity ? `<div style="color:#8899bb;margin-bottom:4px">Activity: <span style="color:#e2eaf8">${activity}</span></div>` : ''}
+          <div style="color:#8899bb;margin-bottom:4px">Battery: <span style="color:#e2eaf8">${battery}</span></div>
+          ${stale ? '<div style="color:#ffb800;margin-top:6px;font-size:10px;letter-spacing:0.1em">⚠ STALE LOCATION</div>' : ''}
+          <button onclick="locateNowFor('${deviceId}')" style="margin-top:10px;width:100%;padding:6px 0;background:#00d4ff15;border:1px solid #00d4ff40;border-radius:6px;color:#00d4ff;font-family:'IBM Plex Mono',monospace;font-size:10px;cursor:pointer;letter-spacing:0.1em">⊕ LOCATE NOW</button>
+        </div>
+      `);
+
+    if (mapMarkers[deviceId]) {
+      mapMarkers[deviceId].setLngLat([loc.longitude, loc.latitude]);
+    } else {
+      mapMarkers[deviceId] = new mapboxgl.Marker({ element: el, anchor: 'center' })
+        .setLngLat([loc.longitude, loc.latitude])
+        .setPopup(popup)
+        .addTo(map);
+    }
+  });
+}
+
+function renderMapDevicePanel() {
+  const panel = document.getElementById('mapDevicePanel');
+  if (!panel) return;
+
+  const entries = Object.entries(locationData);
+  if (!entries.length) {
+    panel.innerHTML = '<div style="color:var(--muted);font-size:12px;padding:4px 0">No location data yet — waiting for child devices to check in.</div>';
+    return;
+  }
+
+  panel.innerHTML = entries.map(([deviceId, loc]) => {
+    const color = deviceColor(deviceId);
+    const stale = isStale(loc.recorded_at);
+    const pinColor = stale ? '#ffb800' : color;
+    const device = deviceList.find(d => d.device_id === deviceId);
+    const name = device?.display_name || 'Device';
+    const activity = activityLabel(loc.speed);
+    const lastSeen = timeAgo(loc.recorded_at);
+    const isActive = selectedDevice === deviceId;
+
+    return `
+      <div class="map-device-chip ${isActive ? 'active' : ''}" onclick="selectDevice('${deviceId}')">
+        <div class="map-device-chip-dot" style="background:${pinColor};box-shadow:0 0 6px ${pinColor}80"></div>
+        <div>
+          <div class="map-device-name">${name}</div>
+          <div class="map-device-meta">${lastSeen}${activity ? ' · ' + activity : ''}${stale ? ' · STALE' : ''}</div>
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
+function fitMapToPins() {
+  const locs = Object.values(locationData);
+  if (!locs.length || !map) return;
+
+  if (locs.length === 1) {
+    map.flyTo({ center: [locs[0].longitude, locs[0].latitude], zoom: 14, duration: 1500 });
+    return;
+  }
+
+  const bounds = locs.reduce((b, loc) => b.extend([loc.longitude, loc.latitude]),
+    new mapboxgl.LngLatBounds([locs[0].longitude, locs[0].latitude], [locs[0].longitude, locs[0].latitude]));
+  map.fitBounds(bounds, { padding: 80, duration: 1500 });
+}
+
+function selectDevice(deviceId) {
+  selectedDevice = deviceId;
+  const loc = locationData[deviceId];
+  if (loc && map) {
+    map.flyTo({ center: [loc.longitude, loc.latitude], zoom: 15, duration: 1000 });
+    if (mapMarkers[deviceId]) mapMarkers[deviceId].togglePopup();
+  }
+  renderMapDevicePanel();
+}
+
+async function locateNow() {
+  // Locate all devices
+  const deviceIds = Object.keys(locationData);
+  if (!deviceIds.length) return;
+  for (const id of deviceIds) await locateNowFor(id);
+}
+
+async function locateNowFor(deviceId) {
+  if (!sb || !familyId) return;
+  const btn = document.getElementById('locateNowBtn');
+  if (btn) { btn.classList.add('locating'); btn.querySelector('#locateBtnIcon').textContent = '◌'; }
+  locatingDeviceId = deviceId;
+
+  const { error } = await sb.from('locate_requests').insert({
+    device_id: deviceId,
+    family_id: familyId,
+    requested_by: familyId,  // will be replaced by auth.uid() once auth is wired
+    status: 'pending',
+  });
+
+  if (error) console.error('[locateNow] error:', error.message);
+
+  // Button resets after 10s or when fulfilled via realtime
+  setTimeout(() => {
+    if (btn) { btn.classList.remove('locating'); btn.querySelector('#locateBtnIcon').textContent = '⊕'; }
+    locatingDeviceId = null;
+  }, 10000);
+}
+
+function toggleTrail() {
+  showTrail = !showTrail;
+  document.getElementById('trailState').textContent = showTrail ? 'On' : 'Off';
+  Object.values(mapTrailLayers).forEach(layerId => {
+    if (map && map.getLayer(layerId)) {
+      map.setPaintProperty(layerId, 'line-opacity', showTrail ? 0.5 : 0);
+    }
+  });
+}
+
+function subscribeLocationRealtime() {
+  if (!sb || !familyId) return;
+  sb.channel('location-updates')
+    .on('postgres_changes', {
+      event: '*', schema: 'public',
+      table: 'child_location_current',
+      filter: `family_id=eq.${familyId}`
+    }, async (payload) => {
+      const loc = payload.new;
+      locationData[loc.device_id] = loc;
+      // Refresh trail
+      const { data } = await sb.from('device_locations').select('latitude,longitude,recorded_at,speed')
+        .eq('device_id', loc.device_id).order('recorded_at', { ascending: false }).limit(30);
+      if (data) trailData[loc.device_id] = data.reverse().map(d => [d.longitude, d.latitude]);
+      renderMapPins();
+      renderMapDevicePanel();
+      // Dismiss locating state if this was an on-demand response
+      if (loc.device_id === locatingDeviceId) {
+        const btn = document.getElementById('locateNowBtn');
+        if (btn) { btn.classList.remove('locating'); btn.querySelector('#locateBtnIcon').textContent = '⊕'; }
+        locatingDeviceId = null;
+      }
+    })
+    .subscribe();
+}
+
 </script>
 </body>
 </html>
