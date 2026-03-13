@@ -1,5 +1,5 @@
 // SafeSwitch · Edge Function · policy-engine
-// 3b1.5 — Production-grade Policy Decision Engine
+// Phase 4a — Phase 3 production engine + DNS profile sync + enforcement sync log
 //
 // Invoke routes:
 //   POST /policy-engine/compute          { device_id, trigger_source? }
@@ -64,12 +64,9 @@ async function computeForDevice(
 
   const policy = await getPolicyForChild(device.child_id);
   if (!policy) {
-    return writeState(deviceId, device.child_id, device.family_id,
-      unrestricted(), trigger
-    );
+    return writeState(deviceId, device.child_id, device.family_id, unrestricted(), trigger);
   }
 
-  // Evaluate time in the family's timezone
   const now = nowInTimezone(policy.timezone);
 
   // ── Priority ladder ──────────────────────────────────────
@@ -90,7 +87,7 @@ async function computeForDevice(
     }, trigger);
   }
 
-  // 2. Active approved override — check scope before applying
+  // 2. Active approved override
   const activeOverride = await getActiveOverride(policy.id, deviceId, now);
   if (activeOverride) {
     const base = await resolveBaseState(policy, device, now, activeOverride);
@@ -159,72 +156,51 @@ async function resolveBaseState(
   activeOverride: Override | null
 ): Promise<EffectiveStateWrite> {
 
-  const day = getDayName(now);
+  const day  = getDayName(now);
   const time = getTimeStr(now);
 
-  // Load schedules sorted by priority asc, created_at desc (deterministic)
-  const schedules = await getActiveScheduleRules(policy.id, day, time);
-
-  // Safety rules always win regardless of priority
-  const safetyRule = schedules.find(r => r.rule_type === "safety");
+  const schedules      = await getActiveScheduleRules(policy.id, day, time);
+  const safetyRule     = schedules.find(r => r.rule_type === "safety");
   const activeSchedule = safetyRule ?? schedules[0] ?? null;
 
-  // Override scope determines what gets lifted
-  const overrideLiftsAll = activeOverride?.override_scope === "lift_all_restrictions";
-  const overrideLiftsBedtime = activeOverride?.override_scope === "lift_bedtime";
-  const keepSafetyFilters = activeOverride?.keep_safety_filters ?? true;
+  const overrideLiftsAll    = activeOverride?.override_scope === "lift_all_restrictions";
+  const keepSafetyFilters   = activeOverride?.keep_safety_filters ?? true;
+  const schedulePaused      = !overrideLiftsAll && (activeSchedule?.internet_paused ?? false);
 
-  const schedulePaused = !overrideLiftsAll && (activeSchedule?.internet_paused ?? false);
-
-  // Route mode: schedule override → policy default
   const resolvedRouteMode: RouteMode =
     activeSchedule?.route_mode_override ??
     policy.default_route_mode ??
     "full_tunnel";
 
-  // Filter profile: schedule override → policy default
   const filterProfileId =
     activeSchedule?.web_filter_profile_id ??
     policy.web_filter_profile_id ??
     null;
 
-  const filterProfile = filterProfileId
-    ? await getFilterProfile(filterProfileId)
-    : null;
+  const filterProfile = filterProfileId ? await getFilterProfile(filterProfileId) : null;
 
-  // App blocks — skip if override lifts all (but keep safety filters if flagged)
   const appBlocks = overrideLiftsAll && !keepSafetyFilters
     ? []
     : await getActiveAppBlockRules(policy.id, day, time);
 
-  // Specific app override — only block rules NOT matching the allowed app
   const activeAppBlocks = activeOverride?.override_scope === "allow_specific_app" && activeOverride.override_app_id
     ? appBlocks.filter(a => a.id !== activeOverride.override_app_id)
     : appBlocks;
 
-  // DNS patterns: filter categories + filter domains + app block patterns
-  // Conflict resolution: safety blocks > explicit blocks > category blocks > allowlist exceptions
-  const categoryPatterns = filterProfile
-    ? categoryToDnsPatterns(filterProfile.blocked_categories, keepSafetyFilters)
-    : [];
+  const categoryPatterns    = filterProfile ? categoryToDnsPatterns(filterProfile.blocked_categories, keepSafetyFilters) : [];
   const filterDomainPatterns = filterProfile?.blocked_domains ?? [];
-  const appDnsPatterns = activeAppBlocks.flatMap(a => a.dns_patterns);
-  const activeDnsPatterns = [...new Set([...categoryPatterns, ...filterDomainPatterns, ...appDnsPatterns])];
+  const appDnsPatterns       = activeAppBlocks.flatMap(a => a.dns_patterns);
+  const activeDnsPatterns    = [...new Set([...categoryPatterns, ...filterDomainPatterns, ...appDnsPatterns])];
 
-  // Allowlist — never override safety category blocks
-  const allowedDomains = filterProfile?.allowed_domains ?? [];
-  const safetyDomains = categoryToDnsPatterns(["malware","phishing"], true);
+  const allowedDomains       = filterProfile?.allowed_domains ?? [];
+  const safetyDomains        = categoryToDnsPatterns(["malware","phishing"], true);
   const activeAllowedDomains = allowedDomains.filter(
     d => !safetyDomains.some(s => domainMatchesPattern(d, s))
   );
 
-  // IP ranges from app blocks
   const activeIpRanges = [...new Set(activeAppBlocks.flatMap(a => a.ip_ranges))];
+  const nextChange     = computeNextChange(now, policy, activeSchedule, activeOverride);
 
-  // Determine next state change — full lookahead across all boundaries
-  const nextChange = computeNextChange(now, policy, activeSchedule, activeOverride);
-
-  // Banner
   const isAgreementRule = activeSchedule?.is_agreement_rule ?? false;
   const stateReason: StateReason = schedulePaused
     ? (isAgreementRule ? "agreement_rule" : "schedule")
@@ -237,28 +213,28 @@ async function resolveBaseState(
   );
 
   return {
-    internet_paused: schedulePaused,
-    emergency_locked: false,
-    state_reason: stateReason,
-    resolved_route_mode: resolvedRouteMode,
+    internet_paused:          schedulePaused,
+    emergency_locked:         false,
+    state_reason:             stateReason,
+    resolved_route_mode:      resolvedRouteMode,
     active_filter_profile_id: filterProfileId,
-    active_app_block_ids: activeAppBlocks.map(a => a.id),
-    active_dns_patterns: activeDnsPatterns,
-    active_allowed_domains: activeAllowedDomains,
-    active_ip_ranges: activeIpRanges,
-    safe_search_enabled: filterProfile?.safe_search_enabled ?? false,
-    youtube_restricted: filterProfile?.youtube_restricted ?? false,
-    active_rule_id: activeSchedule?.id ?? null,
-    active_override_id: activeOverride?.id ?? null,
-    next_state_change_at: nextChange,
-    banner_title: bannerTitle,
-    banner_body: bannerBody,
-    banner_source: bannerSource,
-    banner_until: nextChange,
+    active_app_block_ids:     activeAppBlocks.map(a => a.id),
+    active_dns_patterns:      activeDnsPatterns,
+    active_allowed_domains:   activeAllowedDomains,
+    active_ip_ranges:         activeIpRanges,
+    safe_search_enabled:      filterProfile?.safe_search_enabled ?? false,
+    youtube_restricted:       filterProfile?.youtube_restricted ?? false,
+    active_rule_id:           activeSchedule?.id ?? null,
+    active_override_id:       activeOverride?.id ?? null,
+    next_state_change_at:     nextChange,
+    banner_title:             bannerTitle,
+    banner_body:              bannerBody,
+    banner_source:            bannerSource,
+    banner_until:             nextChange,
   };
 }
 
-// ── Write state with hash + audit ────────────────────────────
+// ── Write state + audit + Phase 4a DNS sync ──────────────────
 
 async function writeState(
   deviceId: string,
@@ -268,38 +244,36 @@ async function writeState(
   trigger: ComputeTrigger
 ): Promise<EffectiveState> {
 
-  // Compute hash of enforcement-relevant fields
   const hashInput = JSON.stringify({
-    internet_paused: state.internet_paused,
-    emergency_locked: state.emergency_locked,
-    resolved_route_mode: state.resolved_route_mode,
-    active_dns_patterns: [...state.active_dns_patterns].sort(),
+    internet_paused:        state.internet_paused,
+    emergency_locked:       state.emergency_locked,
+    resolved_route_mode:    state.resolved_route_mode,
+    active_dns_patterns:    [...state.active_dns_patterns].sort(),
     active_allowed_domains: [...state.active_allowed_domains].sort(),
-    active_ip_ranges: [...state.active_ip_ranges].sort(),
-    safe_search_enabled: state.safe_search_enabled,
-    youtube_restricted: state.youtube_restricted,
-    active_app_block_ids: [...state.active_app_block_ids].sort(),
+    active_ip_ranges:       [...state.active_ip_ranges].sort(),
+    safe_search_enabled:    state.safe_search_enabled,
+    youtube_restricted:     state.youtube_restricted,
+    active_app_block_ids:   [...state.active_app_block_ids].sort(),
   });
   const newHash = createHash("sha256").update(hashInput).digest("hex");
 
-  // Load current state to check if anything changed
   const { data: current } = await supabase
     .from("child_effective_state")
     .select("state_hash, state_version, state_reason, is_paused")
     .eq("device_id", deviceId)
     .single();
 
-  const unchanged = current?.state_hash === newHash;
+  const unchanged  = current?.state_hash === newHash;
   const newVersion = (current?.state_version ?? 0) + (unchanged ? 0 : 1);
 
   const row = {
-    device_id: deviceId,
-    child_id: childId,
-    family_id: familyId,
+    device_id:        deviceId,
+    child_id:         childId,
+    family_id:        familyId,
     last_computed_at: new Date().toISOString(),
-    last_trigger: trigger,
-    state_hash: newHash,
-    state_version: newVersion,
+    last_trigger:     trigger,
+    state_hash:       newHash,
+    state_version:    newVersion,
     ...state,
   };
 
@@ -311,25 +285,81 @@ async function writeState(
 
   if (error) throw error;
 
-  // Write audit event only if state actually changed
   if (!unchanged) {
+    // Audit event
     await supabase.from("child_effective_state_events").insert({
-      device_id: deviceId,
-      child_id: childId,
-      family_id: familyId,
+      device_id:           deviceId,
+      child_id:            childId,
+      family_id:           familyId,
       previous_state_hash: current?.state_hash ?? null,
-      new_state_hash: newHash,
-      previous_reason: current?.state_reason ?? null,
-      new_reason: state.state_reason,
-      previous_paused: current?.is_paused ?? null,
-      new_paused: state.internet_paused,
-      trigger_source: trigger,
-      trigger_detail: { active_rule_id: state.active_rule_id, active_override_id: state.active_override_id },
-      changed_at: new Date().toISOString(),
+      new_state_hash:      newHash,
+      previous_reason:     current?.state_reason ?? null,
+      new_reason:          state.state_reason,
+      previous_paused:     current?.is_paused ?? null,
+      new_paused:          state.internet_paused,
+      trigger_source:      trigger,
+      trigger_detail:      { active_rule_id: state.active_rule_id, active_override_id: state.active_override_id },
+      changed_at:          new Date().toISOString(),
     });
+
+    // Phase 4a: derive DNS profile and queue enforcement sync
+    await syncDnsProfile(childId, familyId, newHash);
   }
 
   return data;
+}
+
+// ── Phase 4a: DNS profile sync ───────────────────────────────
+// Called only when state hash changes — never redundant.
+// Writes dns_profile_versions and a pending enforcement_sync_log
+// entry that the node agent picks up via Supabase realtime.
+
+async function syncDnsProfile(
+  childId: string,
+  familyId: string,
+  stateHash: string
+): Promise<void> {
+  try {
+    const { data: dnsVersion, error: dnsError } = await supabase
+      .rpc("compute_dns_profile", {
+        p_child_id:   childId,
+        p_family_id:  familyId,
+        p_state_hash: stateHash,
+      });
+
+    if (dnsError) {
+      console.error("[policy-engine] compute_dns_profile failed:", dnsError.message);
+      return; // non-fatal — node will catch up on next realtime event
+    }
+
+    const { data: nodeRow } = await supabase
+      .from("nodes")
+      .select("id")
+      .eq("family_id", familyId)
+      .eq("status", "active")
+      .maybeSingle();
+
+    if (!nodeRow) {
+      console.warn("[policy-engine] no active node for family", familyId);
+      return;
+    }
+
+    await supabase.from("enforcement_sync_log").insert({
+      family_id,
+      node_id:   nodeRow.id,
+      child_id:  childId,
+      sync_type: "dns_profile",
+      payload: {
+        dns_profile_version: dnsVersion,
+        state_hash:          stateHash,
+      },
+      status: "pending",
+    });
+
+  } catch (err: any) {
+    // Never let DNS sync failure break policy computation
+    console.error("[policy-engine] syncDnsProfile error:", err.message);
+  }
 }
 
 // ── DB helpers ───────────────────────────────────────────────
@@ -375,7 +405,6 @@ async function getActiveOverride(
 async function getActiveScheduleRules(
   policyId: string, day: string, time: string
 ): Promise<ScheduleRule[]> {
-  // Fetch sorted by priority asc, created_at desc — deterministic winner is [0]
   const { data } = await supabase
     .from("child_schedule_rules")
     .select("*")
@@ -412,15 +441,14 @@ async function getActiveAppBlockRules(
   });
 }
 
-// ── Time helpers (timezone-aware) ────────────────────────────
+// ── Time helpers ─────────────────────────────────────────────
 
 function nowInTimezone(tz: string): Date {
-  // Deno/V8 Intl is available in Supabase Edge runtime
   try {
     const str = new Date().toLocaleString("en-US", { timeZone: tz });
     return new Date(str);
   } catch {
-    return new Date(); // fallback UTC
+    return new Date();
   }
 }
 
@@ -434,7 +462,7 @@ function getTimeStr(d: Date): string {
 
 function timeInWindow(time: string, start: string, end: string): boolean {
   if (start <= end) return time >= start && time <= end;
-  return time >= start || time <= end; // overnight window
+  return time >= start || time <= end;
 }
 
 function isDuringBedtime(now: Date, start: string, end: string): boolean {
@@ -456,35 +484,20 @@ function computeNextChange(
   activeOverride: Override | null
 ): string | null {
   const candidates: Date[] = [];
-
-  // Override expiry
-  if (activeOverride?.override_expires_at) {
-    candidates.push(new Date(activeOverride.override_expires_at));
-  }
-
-  // Pause expiry
-  if (policy.paused_until) {
-    candidates.push(new Date(policy.paused_until));
-  }
-
-  // Active schedule end
+  if (activeOverride?.override_expires_at) candidates.push(new Date(activeOverride.override_expires_at));
+  if (policy.paused_until) candidates.push(new Date(policy.paused_until));
   if (activeSchedule?.end_time) {
     const [h, m] = activeSchedule.end_time.split(":").map(Number);
-    const t = new Date(now);
-    t.setHours(h, m, 0, 0);
+    const t = new Date(now); t.setHours(h, m, 0, 0);
     if (t <= now) t.setDate(t.getDate() + 1);
     candidates.push(t);
   }
-
-  // Bedtime start (if not currently in bedtime)
   if (policy.bedtime_enabled && policy.bedtime_start) {
     const [h, m] = policy.bedtime_start.split(":").map(Number);
-    const t = new Date(now);
-    t.setHours(h, m, 0, 0);
+    const t = new Date(now); t.setHours(h, m, 0, 0);
     if (t <= now) t.setDate(t.getDate() + 1);
     candidates.push(t);
   }
-
   if (candidates.length === 0) return null;
   return candidates.sort((a, b) => a.getTime() - b.getTime())[0].toISOString();
 }
@@ -492,12 +505,8 @@ function computeNextChange(
 function formatTime(iso: string | null, tz: string): string {
   if (!iso) return "";
   try {
-    return new Date(iso).toLocaleTimeString("en-US", {
-      timeZone: tz, hour: "numeric", minute: "2-digit"
-    });
-  } catch {
-    return iso;
-  }
+    return new Date(iso).toLocaleTimeString("en-US", { timeZone: tz, hour: "numeric", minute: "2-digit" });
+  } catch { return iso; }
 }
 
 // ── Banner builder ───────────────────────────────────────────
@@ -508,21 +517,19 @@ function buildBanner(
   nextChange: string | null,
   tz: string
 ): { bannerTitle: string | null; bannerBody: string | null; bannerSource: string | null } {
-  if (reason === "unrestricted") {
-    return { bannerTitle: null, bannerBody: null, bannerSource: null };
-  }
+  if (reason === "unrestricted") return { bannerTitle: null, bannerBody: null, bannerSource: null };
   const untilStr = nextChange ? ` until ${formatTime(nextChange, tz)}` : "";
   if (reason === "agreement_rule") {
     return {
       bannerTitle: activeSchedule?.agreement_label ?? "Agreement rule active",
-      bannerBody: `This restriction is part of your agreement${untilStr}.`,
+      bannerBody:  `This restriction is part of your agreement${untilStr}.`,
       bannerSource: "agreement",
     };
   }
   if (reason === "schedule") {
     return {
       bannerTitle: activeSchedule?.label ?? "Restrictions active",
-      bannerBody: `Some content is restricted${untilStr}.`,
+      bannerBody:  `Some content is restricted${untilStr}.`,
       bannerSource: "schedule",
     };
   }
@@ -548,9 +555,7 @@ function categoryToDnsPatterns(categories: string[], safetyOnly = false): string
 }
 
 function domainMatchesPattern(domain: string, pattern: string): boolean {
-  if (pattern.startsWith("*.")) {
-    return domain.endsWith(pattern.slice(1));
-  }
+  if (pattern.startsWith("*.")) return domain.endsWith(pattern.slice(1));
   return domain === pattern;
 }
 
@@ -570,8 +575,8 @@ function unrestricted(): EffectiveStateWrite {
 function summariseSettled(results: PromiseSettledResult<EffectiveState>[]) {
   return {
     computed: results.filter(r => r.status === "fulfilled").length,
-    failed: results.filter(r => r.status === "rejected").length,
-    errors: results
+    failed:   results.filter(r => r.status === "rejected").length,
+    errors:   results
       .filter((r): r is PromiseRejectedResult => r.status === "rejected")
       .map(r => r.reason?.message ?? "unknown"),
   };
