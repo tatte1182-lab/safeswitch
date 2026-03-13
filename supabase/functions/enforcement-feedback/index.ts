@@ -200,8 +200,12 @@ async function fetchChildFeedback(child_id: string) {
           .in("device_id", deviceIds)
       : Promise.resolve({ data: [], error: null }),
 
-    // node_heartbeats table not yet in schema — resolve empty
-    Promise.resolve({ data: [], error: null }),
+    nodeIds.length
+      ? supabase
+          .from("node_heartbeats")
+          .select("node_id, public_ip, endpoint, tunnel_status, dns_status, software_version, pinged_at")
+          .in("node_id", nodeIds)
+      : Promise.resolve({ data: [], error: null }),
   ]);
 
   if (syncErr)         throw syncErr;
@@ -343,8 +347,13 @@ async function fetchDeviceFeedback(device_id: string) {
       .eq("device_id", device_id)
       .maybeSingle(),
 
-    // node_heartbeats table not yet in schema — resolve null
-    Promise.resolve({ data: null, error: null }),
+    nodeId
+      ? supabase
+          .from("node_heartbeats")
+          .select("node_id, public_ip, endpoint, tunnel_status, dns_status, software_version, pinged_at")
+          .eq("node_id", nodeId)
+          .maybeSingle()
+      : Promise.resolve({ data: null, error: null }),
   ]);
 
   if (stuckPendingErr) throw stuckPendingErr;

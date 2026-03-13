@@ -237,13 +237,36 @@ async function markNodeOffline() {
 }
 
 async function heartbeat() {
+  const nowIso = new Date().toISOString();
+
+  // Update node status
   const { error } = await supabase
     .from("nodes")
-    .update({ last_seen_at: new Date().toISOString(), status: "active" })
+    .update({ last_seen_at: nowIso, status: "active" })
     .eq("id", NODE_ID);
 
   if (error) console.error("[heartbeat] error:", error.message);
-  else console.log("[heartbeat] ✓", new Date().toISOString());
+  else console.log("[heartbeat] ✓", nowIso);
+
+  // Upsert node_heartbeats — single row per node, always latest
+  const hbPayload: Record<string, unknown> = {
+    node_id:          NODE_ID,
+    family_id:        FAMILY_ID,
+    public_ip:        Deno.env.get("PUBLIC_IP") ?? Deno.env.get("NODE_PUBLIC_IP") ?? null,
+    endpoint:         `${Deno.env.get("PUBLIC_IP") ?? ""}:${WG_PORT}`,
+    tunnel_status:    "active",
+    dns_status:       "active",
+    software_version: "4a",
+    pinged_at:        nowIso,
+    created_at:       nowIso,
+  };
+
+  const { error: hbErr } = await supabase
+    .from("node_heartbeats")
+    .upsert(hbPayload, { onConflict: "node_id" });
+
+  if (hbErr) console.error("[heartbeat] node_heartbeats upsert failed:", JSON.stringify(hbErr));
+  else console.log("[heartbeat] node_heartbeats ✓");
 
   await checkRelayFallbacks();
 }
