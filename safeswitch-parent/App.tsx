@@ -1,12 +1,10 @@
-import AddChildEnrollmentFlow from "./components/enrollment/AddChildEnrollmentFlow";
+import { SafeAreaProvider } from 'react-native-safe-area-context';
+import SafeSwitchDashboard from './SafeSwitchDashboard';
 
 export default function App() {
   return (
-    <AddChildEnrollmentFlow
-      authToken="mock-token"
-      familyId="mock-family-id"
-      onComplete={(childId) => console.log("Done:", childId)}
-      onDismiss={() => console.log("Dismissed")}
-    />
+    <SafeAreaProvider>
+      <SafeSwitchDashboard />
+    </SafeAreaProvider>
   );
 }
